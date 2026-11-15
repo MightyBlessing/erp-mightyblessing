@@ -284,7 +284,8 @@
     var ms=ev.members||[];
     var workedCount=ms.filter(function(m){return m.w;}).length;
     var dayTotal=rate*workedCount, fundBase=Math.round(net*ratio);
-    var pool=ev.wageSrc==='fund'?fundBase-dayTotal:fundBase; if(pool<0)pool=0;
+    /* 기본: 사례비 예산 안에 당일 일급이 포함된다. 'opex'로 둔 행사만 운영비에서 따로 나간다. */
+    var pool=ev.wageSrc==='opex'?fundBase:fundBase-dayTotal; if(pool<0)pool=0;
     var alloc=ms.map(function(){return 0;}),capped=ms.map(function(){return false;}),guard=0;
     while(guard++<12){
       var fixed=0,activePts=0;
@@ -357,8 +358,9 @@
              '이에 아래와 같이 행사를 개최하고자 하오니, 귀 교회의 귀한 공간을 사용할 수 있도록 허락하여 주시기를 정중히 요청드립니다.'],
       ov:OV_KEYS.map(function(k){return {k:k,v:''};}),
       signer:'마이티블레싱대표', seal:true,
-      addr:'12995 경기도 하남시 감일순환로 40 104호(감일동)',
-      tel1:'010-7758-9192', tel2:'010-4498-3137', email:'contact@mightyblessing.com',
+      /* 연락처는 비워 둔다 — 저장소가 공개라 코드에 번호를 박지 않는다.
+         한 번 입력하면 그 문서에 저장되고, 복사해서 새 문서를 만들면 따라온다. */
+      addr:'', tel1:'', tel2:'', email:'contact@mightyblessing.com',
       line:[], steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
   }
 
@@ -653,7 +655,7 @@
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
     }).join('');
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
-    if(ev.wageSrc==='fund')chain.push(['− 당일 일급 '+c.workedCount+'명','−'+won(c.dayTotal)]);
+    if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'명','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
     var delCtl='';
     if(writable()&&p.status==='draft'){
@@ -674,7 +676,7 @@
             sg('mDirect','직접 입력',ev.mode!=='calc',ro)+sg('mCalc','수입 − 운영비 − 세금',ev.mode==='calc',ro)+'</div></div>'+
           (ev.mode==='calc'
             ? fld('number','rev','행사 수입',ev.rev,dis)+fld('number','opex','운영비 (당일 일급 포함)',ev.opex,dis)+fld('number','tax','세금',ev.tax,dis)+
-              '<p class="hint">당일 일급은 운영비 항목이므로 운영비 안에 포함해서 넣으세요.</p>'
+              '<p class="hint">당일 일급은 사례비 예산에서 나갑니다. 운영비에 중복으로 넣지 마세요.</p>'
             : fld('number','net','행사 잔여액 (세후)',ev.net,dis))+
         '</section>'+
         '<section class="card"><h2>계산 설정</h2>'+
@@ -684,7 +686,7 @@
             [[10000,'10,000원'],[1000,'1,000원'],[1,'1원']].map(function(u){return '<option value="'+u[0]+'"'+(num(ev.unit,10000)===u[0]?' selected':'')+'>'+u[1]+'</option>';}).join('')+
             '</select></div></div>'+
           '<div class="field"><label>당일 일급 재원</label><div class="seg">'+
-            sg('sOpex','운영비 (평시)',ev.wageSrc!=='fund',ro)+sg('sFund','사례비 예산',ev.wageSrc==='fund',ro)+'</div></div>'+
+            sg('sFund','사례비 예산 (기본)',ev.wageSrc!=='opex',ro)+sg('sOpex','운영비 별도',ev.wageSrc==='opex',ro)+'</div></div>'+
           '<div class="field"><label>상한 초과분</label><div class="seg">'+
             sg('cCarry','이월',ev.capMode!=='redistribute',ro)+sg('cRedist','재배분',ev.capMode==='redistribute',ro)+'</div></div>'+
         '</section>'+
@@ -711,8 +713,8 @@
   function sg(id,label,on,ro){return '<button type="button" id="'+id+'" aria-pressed="'+(on?'true':'false')+'"'+(ro?' disabled':'')+'>'+label+'</button>';}
   function settleNote(c,ev){
     if(c.anyCap)return '<div class="note n-warn">1인 상한 '+won(c.cap)+'에 걸린 인원이 있습니다. 남는 '+won(c.leftover)+'은 현재 '+(ev.capMode==='redistribute'?'재배분':'이월')+' 처리입니다.</div>';
-    if(c.net<=0)return '<div class="note n-warn">잔여액이 0 이하입니다. 준비 사례비는 발생하지 않습니다. 당일 일급은 운영비에서 지급됩니다.</div>';
-    if(c.pool===0&&c.net>0)return '<div class="note n-warn">준비 사례비 재원이 0원입니다. 당일 일급이 사례비 예산을 넘었습니다.</div>';
+    if(c.net<=0)return '<div class="note n-warn">잔여액이 0 이하라 사례비 예산이 잡히지 않습니다. 지급 여부를 따로 정해야 합니다.</div>';
+    if(c.pool===0&&c.net>0)return '<div class="note n-warn">준비 사례비 재원이 0원입니다. 당일 일급이 사례비 예산을 다 썼습니다.</div>';
     return '';
   }
   function settleApproval(ev,p){
@@ -920,7 +922,7 @@
     if(!S.db)return;
     var ref=S.db.collection('events').doc();
     ref.set({name:'새 행사',date:today(),place:'',mode:'direct',net:0,rev:0,opex:0,tax:0,
-      rate:150000,ratio:50,cap:300000,unit:10000,wageSrc:'opex',capMode:'carry',members:[],status:'draft',
+      rate:150000,ratio:50,cap:300000,unit:10000,wageSrc:'fund',capMode:'carry',members:[],status:'draft',
       createdBy:S.me.id||'',createdAt:nowISO(),updatedAt:nowISO()})
       .then(function(){S.view='settle';S.sel=ref.id;remember();render();})
       .catch(function(e){errbar('만들지 못했습니다 '+(e&&e.code||''));});
@@ -1011,7 +1013,7 @@
     return {
       events:{ 'sample-1':{name:'샘플 행사 (예시)',date:today(),place:'○○아트홀',mode:'direct',
         net:2000000,rev:0,opex:0,tax:0,rate:150000,ratio:50,cap:300000,unit:10000,
-        wageSrc:'opex',capMode:'carry',status:'submitted',createdAt:nowISO(),updatedAt:nowISO(),
+        wageSrc:'fund',capMode:'carry',status:'submitted',createdAt:nowISO(),updatedAt:nowISO(),
         members:[
           {n:'팀원 1',p:'대본·큐시트 작성, 대기화면 제작',r:'공연 연출',w:true,pt:11},
           {n:'팀원 2',p:'대관 신청·견적·계약 진행',r:'음향 세팅·운영',w:true,pt:11},
