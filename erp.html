@@ -236,7 +236,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -985,6 +985,94 @@
     });
   }
 
+  /* ============ 데모 모드 ============
+     claude.ai 밖(버셀 등)에서 열렸을 때. 로그인·공유 저장이 없으므로
+     브라우저 안에서만 도는 가짜 저장소와 예시 데이터로 화면을 둘러보게 한다.
+     실제 회사 데이터는 절대 넣지 않는다 — 이 화면은 공개될 수 있다. */
+  var AV='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26"><circle cx="13" cy="13" r="13" fill="%23c9cdd3"/></svg>';
+  var DEMO_NAMES={'demo-me':'나 (체험)','u-a':'회계 담당 A','u-b':'회계 담당 B','u-c':'대표','u-d':'팀원 1','u-e':'팀원 2'};
+
+  function demoBanner(){
+    var d=document.createElement('div');
+    d.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:40;background:#A8600C;color:#fff;padding:8px 14px;font:12px/1.5 system-ui;text-align:center';
+    d.textContent='데모 모드 — 예시 데이터로 둘러보는 화면입니다. 입력한 내용은 이 브라우저에만 남고 다른 사람과 공유되지 않습니다.';
+    document.body.appendChild(d);
+    document.body.style.paddingBottom='36px';
+  }
+  function demoSeed(){
+    return {
+      events:{ 'sample-1':{name:'샘플 행사 (예시)',date:today(),place:'○○아트홀',mode:'direct',
+        net:2000000,rev:0,opex:0,tax:0,rate:150000,ratio:50,cap:300000,unit:10000,
+        wageSrc:'opex',capMode:'carry',status:'submitted',createdAt:nowISO(),updatedAt:nowISO(),
+        members:[
+          {n:'팀원 1',p:'대본·큐시트 작성, 대기화면 제작',r:'공연 연출',w:true,pt:11},
+          {n:'팀원 2',p:'대관 신청·견적·계약 진행',r:'음향 세팅·운영',w:true,pt:11},
+          {n:'팀원 3',p:'홍보 영상 편집, 현장 소모품 구매',r:'관객 접수',w:true,pt:7},
+          {n:'팀원 4',p:'환불 송금 처리',r:'관객 접수',w:true,pt:3},
+          {n:'팀원 5',p:'초기 장소 조사',r:'불참',w:false,pt:0}
+        ]} },
+      approvals:{},
+      docs:{ 'sample-doc':{type:'official',title:'장소 대관 요청의 건 (예시)',no:'마블 제2024/2026-001호',date:today(),
+        to:'○○교회 당회장',cc:'당회',subject:'○○행사(가제) 장소 대관 요청의 건',
+        paras:['귀 교회와 당회 위에 하나님의 은혜와 평강이 충만하시기를 기원합니다.',
+               '저희 마이티블레싱은 연합 사역팀과 함께 다음 세대와 청년을 위한 집회를 준비하고 있습니다.',
+               '이에 아래와 같이 집회를 개최하고자 하오니, 귀 교회의 귀한 공간을 사용할 수 있도록 허락하여 주시기를 정중히 요청드립니다.'],
+        ov:[{k:'행사명',v:'○○행사(가제)'},{k:'행사목적',v:'청년·다음 세대 연합 집회 및 예배'},
+            {k:'일시',v:'2027년 5월 2일(일) 21:00 ~ 5월 3일(월) 철거 완료 시'},{k:'주관',v:'마이티블레싱'},
+            {k:'주최/협력',v:'연합 사역팀 4개 단체'},{k:'세부장소',v:'본당(대예배실), 로비, 대기실 및 부속실 일대'},
+            {k:'참석인원',v:'약 2,000~3,000명 내외'},
+            {k:'기타(요청)사항',v:'1) 사전 셋업 협조\n2) 음향·조명·영상 및 전력 사용 협조\n3) 출연진·스태프 대기실 사용'}],
+        signer:'마이티블레싱대표',seal:true,
+        addr:'12995 경기도 하남시 감일순환로 40 104호(감일동)',
+        tel1:'010-0000-0000',tel2:'',email:'contact@mightyblessing.com',
+        steps:[{uid:'u-a',state:'approved',comment:'',at:nowISO()},{uid:'u-c',state:'pending',comment:'',at:''}],
+        status:'submitted',drafter:'demo-me',createdAt:nowISO(),updatedAt:nowISO()} },
+      config:{ roles:{ map:{'u-a':'accounting','u-b':'accounting','u-c':'ceo','demo-me':'member'} } }
+    };
+  }
+  function demoStore(){
+    var KEY='mb-erp-demo-v1', data=null, subs=[];
+    try{ data=JSON.parse(localStorage.getItem(KEY)||'null'); }catch(e){}
+    if(!data) data=demoSeed();
+    function save(){ try{localStorage.setItem(KEY,JSON.stringify(data));}catch(e){} subs.forEach(function(f){try{f();}catch(e){}}); }
+    function colOf(c){ if(!data[c]) data[c]={}; return data[c]; }
+    function snap(c,id){ var v=colOf(c)[id];
+      return {id:id,exists:!!v,data:function(){return v?clone(v):undefined;},metadata:{fromCache:false,hasPendingWrites:false}}; }
+    function docRef(c,id){
+      return {id:id,path:c+'/'+id,
+        get:function(){return Promise.resolve(snap(c,id));},
+        set:function(b){colOf(c)[id]=clone(b);save();return Promise.resolve();},
+        update:function(b){var m=colOf(c);m[id]=m[id]||{};Object.keys(b).forEach(function(k){m[id][k]=b[k];});save();return Promise.resolve();},
+        delete:function(){delete colOf(c)[id];save();return Promise.resolve();},
+        onSnapshot:function(next){var f=function(){next(snap(c,id));};subs.push(f);setTimeout(f,0);return function(){};}};
+    }
+    return {
+      doc:function(p){var a=p.split('/');return docRef(a[0],a[1]);},
+      collection:function(c){
+        return {doc:function(id){return docRef(c,id||('d'+Date.now()+Math.floor(Math.random()*1000)));},
+          onSnapshot:function(next){
+            var f=function(){var m=colOf(c);
+              next({docs:Object.keys(m).map(function(k){return snap(c,k);}),metadata:{fromCache:false}});};
+            subs.push(f);setTimeout(f,0);return function(){};}};
+      }};
+  }
+  function demoUser(){
+    var me={id:'demo-me',name:'나 (체험)',avatarUrl:AV,color:'#1F6F4A',email:null,isOwner:true,canEdit:true};
+    function prof(i){ return {id:i,name:DEMO_NAMES[i]||'팀원',avatarUrl:AV,color:'#888',email:null,isMe:i==='demo-me',guest:false}; }
+    return {
+      me:function(){return Promise.resolve(me);},
+      id:function(){return Promise.resolve(me.id);},
+      can:function(){return Promise.resolve(true);},
+      isOwner:function(){return Promise.resolve(true);},
+      canEdit:function(){return Promise.resolve(true);},
+      profiles:function(ids){var out={};(typeof ids==='string'?[ids]:ids).forEach(function(i){out[i]=prof(i);});return Promise.resolve(out);},
+      search:function(q){
+        var l=Object.keys(DEMO_NAMES).map(prof);
+        if(q) l=l.filter(function(p){return p.name.indexOf(q)>=0;});
+        return Promise.resolve(l.slice(0,8));
+      }};
+  }
+
   /* ============ 부팅 ============ */
   function boot(){
     try{var s=JSON.parse(localStorage.getItem('mb-erp-nav')||'{}');
@@ -993,14 +1081,23 @@
     var tries=0;
     (function wait(){
       if(window.claude&&typeof window.claude.use==='function')return start(window.claude);
-      if(tries++>60){S.loading=false;S.fatal='이 페이지는 claude.ai에서 공유된 링크로 열어야 동작합니다.';render();return;}
+      if(tries++>24){ return startDemo(); }
       setTimeout(wait,250);
     })();
   }
   function start(claude){
     Promise.all([claude.use('db'),claude.use('user')]).then(function(r){
-      S.db=r[0]; S.user=r[1];
-      if(!S.db){S.loading=false;S.fatal='이 화면에서는 공유 데이터를 쓸 수 없습니다. claude.ai에 로그인한 상태로 열어 주세요.';render();return;}
+      if(!r[0]) return startDemo();
+      wire(r[0],r[1]);
+    }).catch(function(){ startDemo(); });
+  }
+  function startDemo(){
+    if(S.demo) return;
+    S.demo=true; demoBanner();
+    wire(demoStore(), demoUser());
+  }
+  function wire(db,user){
+      S.db=db; S.user=user;
       if(S.user){
         S.user.me().then(function(me){
           S.me.id=me.id;S.me.name=me.name;S.me.avatarUrl=me.avatarUrl;S.me.canEdit=me.canEdit;S.me.isOwner=me.isOwner;
@@ -1044,7 +1141,6 @@
         S.roles={}; Object.keys(m).forEach(function(k){S.roles[k]=m[k];});
         resolveNames(); render();
       },function(){});
-    }).catch(function(){S.loading=false;S.fatal='초기화에 실패했습니다. 새로고침해 주세요.';render();});
   }
   boot();
 })();

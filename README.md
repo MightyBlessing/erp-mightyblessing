@@ -6,7 +6,27 @@
 
 ## 구성
 
-`erp.html` 한 파일이 전부다. 빌드 과정이 없다. 이 파일을 Artifact로 게시하면 배포가 끝난다.
+| 파일 | 용도 |
+|---|---|
+| `erp.html` | 원본. Claude Artifact에 게시하는 본문 (doctype·head 없음 — 아티팩트가 붙여준다) |
+| `index.html` | 독립 실행용. `erp.html`을 doctype·charset으로 감싼 것. Vercel이 이걸 띄운다 |
+| `build.sh` | `erp.html` → `index.html` 생성 |
+
+`erp.html`을 고친 뒤 반드시 `sh build.sh`를 돌려 `index.html`을 다시 만든다. 안 하면 Vercel 쪽만 옛 버전이 남고, **charset이 빠져 한글이 깨진다.**
+
+## 두 가지 배포
+
+| | Claude Artifact | Vercel |
+|---|---|---|
+| 주소 | claude.ai/artifact/… | …vercel.app |
+| 누가 보나 | claude.ai 계정 있는 사람 | 누구나 |
+| 데이터 | 서버 저장, 실시간 공유 | **없음 — 브라우저에만, 공유 안 됨** |
+| 로그인 | claude.ai 계정 | 없음 |
+| 용도 | 실제 운영 | 디자인·흐름 QA |
+
+Vercel에서는 `window.claude`가 없으므로 6초 뒤 **데모 모드**로 넘어간다. 가짜 저장소(localStorage)와 예시 데이터로 화면을 둘러볼 수 있고, 하단에 주황색 안내 띠가 뜬다.
+
+**데모 모드 예시 데이터에 실제 회사 데이터를 넣지 않는다.** Vercel 주소는 공개될 수 있다.
 
 - 저장소: Claude Artifact의 `db` 기능 (문서 단위 JSON, 실시간 동기화)
 - 로그인: Claude Artifact의 `user` 기능 (claude.ai 계정이 그대로 신원)
