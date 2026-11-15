@@ -245,7 +245,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false};
+    view:'dash',sel:null,docSel:null,docTab:'mine',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -799,6 +799,7 @@
       remember(); render(); return;
     }
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
+    if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
     /* 전자결재 */
     if(t.id==='newDoc') return newDoc();
@@ -1084,11 +1085,187 @@
       }};
   }
 
+  /* ============ 슈파베이스 ============
+     config.js에 url·anonKey가 채워져 있으면 이쪽으로 간다.
+     문서는 docs 테이블(collection/id/jsonb) 한 장에 모두 들어간다.
+     이름·관리자 여부는 members 테이블에서 읽는다. */
+  var SB_LIB='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
+
+  function loadScript(src){
+    return new Promise(function(res,rej){
+      var s=document.createElement('script'); s.src=src;
+      s.onload=function(){res();}; s.onerror=function(){rej(new Error('라이브러리를 불러오지 못했습니다'));};
+      document.head.appendChild(s);
+    });
+  }
+  function sbConfigured(){
+    var c=window.MB_SUPABASE;
+    return !!(c&&c.url&&c.anonKey);
+  }
+
+  function sbStore(sb){
+    var cache={}, subs=[];
+    function fire(col){ subs.forEach(function(s){ if(s.col===col){ try{s.fn();}catch(e){} } }); }
+    function snapOf(col,id){
+      var v=cache[col]&&cache[col][id];
+      return {id:id,exists:!!v,data:function(){return v?clone(v):undefined;},metadata:{fromCache:false,hasPendingWrites:false}};
+    }
+    var loading={};
+    function loadCol(col){
+      if(loading[col])return; loading[col]=true;
+      sb.from('docs').select('id,data').eq('collection',col).then(function(r){
+        loading[col]=false;
+        if(r.error){ errbar('불러오기 실패 ('+col+'): '+r.error.message); return; }
+        cache[col]={};
+        (r.data||[]).forEach(function(row){ cache[col][row.id]=row.data; });
+        fire(col);
+      });
+    }
+    sb.channel('mb-docs')
+      .on('postgres_changes',{event:'*',schema:'public',table:'docs'},function(p){
+        var row=(p.new&&p.new.collection)?p.new:p.old;
+        if(!row||!row.collection)return;
+        var col=row.collection; cache[col]=cache[col]||{};
+        if(p.eventType==='DELETE') delete cache[col][row.id];
+        else cache[col][row.id]=p.new.data;
+        fire(col);
+      }).subscribe();
+
+    function chk(r){ if(r&&r.error) throw r.error; return r; }
+    function docRef(col,id){
+      var ref={
+        id:id, path:col+'/'+id,
+        get:function(){ return Promise.resolve(snapOf(col,id)); },
+        set:function(b){
+          cache[col]=cache[col]||{}; cache[col][id]=clone(b); fire(col);
+          return sb.from('docs').upsert({collection:col,id:id,data:b,updated_at:new Date().toISOString()}).then(chk);
+        },
+        update:function(b){
+          var cur=(cache[col]&&cache[col][id])||{}, next=clone(cur);
+          Object.keys(b).forEach(function(k){ next[k]=b[k]; });
+          return ref.set(next);
+        },
+        delete:function(){
+          if(cache[col]) delete cache[col][id]; fire(col);
+          return sb.from('docs').delete().eq('collection',col).eq('id',id).then(chk);
+        },
+        onSnapshot:function(next){
+          subs.push({col:col,fn:function(){ next(snapOf(col,id)); }});
+          loadCol(col); return function(){};
+        }
+      };
+      return ref;
+    }
+    return {
+      doc:function(p){ var a=p.split('/'); return docRef(a[0],a[1]); },
+      collection:function(col){
+        return {
+          doc:function(id){ return docRef(col, id||('d'+Date.now()+Math.floor(Math.random()*1000))); },
+          onSnapshot:function(next){
+            subs.push({col:col,fn:function(){
+              var m=cache[col]||{};
+              next({docs:Object.keys(m).map(function(k){return snapOf(col,k);}),metadata:{fromCache:false}});
+            }});
+            loadCol(col); return function(){};
+          }
+        };
+      }
+    };
+  }
+
+  function sbUser(session, members){
+    var uid=session.user.id, row=members[uid]||{};
+    var isAdmin=row.role==='admin';
+    var me={id:uid,name:row.name||session.user.email||'사용자',avatarUrl:AV,color:'#1F6F4A',
+            email:session.user.email||null,isOwner:isAdmin,canEdit:isAdmin};
+    function prof(i){
+      var r=members[i]||{};
+      return {id:i,name:r.name||r.email||'알 수 없음',avatarUrl:AV,color:'#888',
+              email:r.email||null,isMe:i===uid,guest:false};
+    }
+    return {
+      me:function(){return Promise.resolve(me);},
+      id:function(){return Promise.resolve(uid);},
+      can:function(n){return Promise.resolve(n==='data.write'?true:isAdmin);},
+      isOwner:function(){return Promise.resolve(isAdmin);},
+      canEdit:function(){return Promise.resolve(isAdmin);},
+      profiles:function(ids){
+        var out={}; (typeof ids==='string'?[ids]:ids).forEach(function(i){out[i]=prof(i);});
+        return Promise.resolve(out);
+      },
+      search:function(q){
+        var l=Object.keys(members).map(prof);
+        if(q) l=l.filter(function(p){return (p.name||'').indexOf(q)>=0||(p.email||'').indexOf(q)>=0;});
+        return Promise.resolve(l.slice(0,8));
+      }
+    };
+  }
+
+  function renderLogin(sb,msg,sent){
+    app=$('#app')||app; if(!app)return;
+    var n=$('#nav'); if(n)n.innerHTML='';
+    var t=$('#ptitle'); if(t)t.textContent='로그인';
+    app.innerHTML=
+      '<div style="max-width:380px;margin:40px auto">'+
+        '<div class="card">'+
+          '<h2 style="margin-bottom:6px">마블 ERP</h2>'+
+          (sent
+            ? '<p style="color:var(--muted);font-size:13px;margin:0 0 14px">메일을 보냈습니다. 받은 편지함에서 <b>로그인 링크</b>를 누르면 들어옵니다.</p>'+
+              '<p class="hint" style="margin:0">메일이 안 보이면 스팸함도 확인해 주세요.</p>'+
+              '<div class="actions" style="margin-top:14px"><button class="btn" id="loginAgain">다른 주소로 다시 보내기</button></div>'
+            : '<p style="color:var(--muted);font-size:13px;margin:0 0 14px">회사 이메일 주소를 넣으면 로그인 링크를 보내드립니다. 비밀번호는 없습니다.</p>'+
+              '<div class="field"><label for="loginEmail">이메일</label>'+
+              '<input id="loginEmail" type="email" placeholder="name@mightyblessing.com" autocomplete="email"></div>'+
+              (msg?'<div class="note n-bad" style="margin:0 0 12px">'+esc(msg)+'</div>':'')+
+              '<div class="actions"><button class="btn primary" id="loginGo">로그인 링크 받기</button></div>')+
+        '</div></div>';
+    if(!sent){
+      var go=$('#loginGo'), box=$('#loginEmail');
+      box.addEventListener('keydown',function(e){ if(e.key==='Enter') go.click(); });
+      go.addEventListener('click',function(){
+        var v=(box.value||'').trim();
+        if(!v||v.indexOf('@')<0) return renderLogin(sb,'이메일 주소를 확인해 주세요.',false);
+        go.disabled=true; go.textContent='보내는 중…';
+        sb.auth.signInWithOtp({email:v,options:{emailRedirectTo:location.origin+location.pathname}})
+          .then(function(r){
+            if(r.error) return renderLogin(sb,r.error.message,false);
+            renderLogin(sb,'',true);
+          });
+      });
+    } else {
+      $('#loginAgain').addEventListener('click',function(){ renderLogin(sb,'',false); });
+    }
+  }
+
+  function startSupabase(){
+    S.loading=true; render();
+    loadScript(SB_LIB).then(function(){
+      var sb=window.supabase.createClient(window.MB_SUPABASE.url, window.MB_SUPABASE.anonKey);
+      S.sb=sb;
+      sb.auth.onAuthStateChange(function(ev){
+        if(ev==='SIGNED_OUT') location.reload();
+      });
+      sb.auth.getSession().then(function(r){
+        var session=r.data&&r.data.session;
+        if(!session){ S.loading=false; return renderLogin(sb,'',false); }
+        sb.from('members').select('uid,email,name,role').then(function(m){
+          var map={};
+          if(m.error) errbar('구성원을 불러오지 못했습니다: '+m.error.message);
+          (m.data||[]).forEach(function(row){ map[row.uid]={email:row.email,name:row.name,role:row.role}; });
+          wire(sbStore(sb), sbUser(session,map));
+        });
+      });
+    }).catch(function(e){
+      S.loading=false; S.fatal='슈파베이스 라이브러리를 불러오지 못했습니다. 인터넷 연결을 확인해 주세요.'; render();
+    });
+  }
+
   /* ============ 부팅 ============ */
   function boot(){
     try{var s=JSON.parse(localStorage.getItem('mb-erp-nav')||'{}');
       if(s.v)S.view=s.v; if(s.s)S.sel=s.s; if(s.d)S.docSel=s.d;}catch(e){}
     renderNav();
+    if(sbConfigured()) return startSupabase();
     var tries=0;
     (function wait(){
       if(window.claude&&typeof window.claude.use==='function')return start(window.claude);
@@ -1113,9 +1290,11 @@
         S.user.me().then(function(me){
           S.me.id=me.id;S.me.name=me.name;S.me.avatarUrl=me.avatarUrl;S.me.canEdit=me.canEdit;S.me.isOwner=me.isOwner;
           var w=$('#who');
-          if(w){w.innerHTML='<img alt=""><span></span>';
+          if(w){
+            w.innerHTML='<img alt=""><span></span>'+(S.sb?'<button class="btn sm" id="signOut" style="margin-left:6px">로그아웃</button>':'');
             w.querySelector('img').src=me.avatarUrl;
-            w.querySelector('span').textContent=(me.name||'익명')+' · '+ROLE_LABEL[myRole()];}
+            w.querySelector('span').textContent=(me.name||'익명')+' · '+ROLE_LABEL[myRole()];
+          }
           render();
         });
         S.user.can('data.write').then(function(v){S.canWrite=v;render();});
