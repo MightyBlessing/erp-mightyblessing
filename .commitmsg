@@ -1,0 +1,12 @@
+슈파베이스 연동 준비: 스키마 · 설정 파일
+
+화면 코드는 그대로 두고 저장소만 갈아끼울 수 있게 되어 있어,
+슈파베이스용 어댑터를 하나 더 붙이는 방향으로 간다.
+
+- supabase/schema.sql: docs(collection/id/jsonb) · members(역할) ·
+  RLS(로그인한 사람 읽기, config는 관리자만) · 로그인 시 members 자동 생성 ·
+  realtime 등록 · 첫 관리자 지정 안내
+- config.js: url / anonKey 자리. 비어 있으면 기존대로(아티팩트 또는 데모) 동작
+- build.sh: index.html에 config.js 로드 추가
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
