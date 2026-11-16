@@ -1817,6 +1817,10 @@
      시트에서는 환급·취소를 금액 마이너스로 적으시는데, 그러면 잔액이
      꼬인다. 여기서는 방향을 뒤집어 받는다 — 출금에 -298,000 을 넣으면
      입금 298,000 으로 들어간다. 보이는 숫자는 같고 잔액만 맞아진다. */
+  /* 장부를 쓸 수 있는 사람. 지급 처리를 하는 건 회계인데 고치는 건
+     관리자만 되면, 잘못 들어간 줄을 정작 적은 사람이 못 고친다. */
+  function ledEditable(){ return myRole()==='accounting'||S.me.canEdit; }
+
   function bankList(){
     return Object.keys(S.banks).map(function(k){
       var b=clone(S.banks[k]); b.id=k; return b;
@@ -1868,7 +1872,7 @@
     return Object.keys(m).sort().reverse();
   }
   function saveBank(id,body){
-    if(!S.db) return Promise.resolve();
+    if(!S.db||!ledEditable()) return Promise.resolve();
     var ref=id?S.db.doc('banks/'+id):S.db.collection('banks').doc();
     body.updatedAt=nowISO(); if(!id) body.createdAt=nowISO();
     return ref.set(body);
@@ -1877,7 +1881,16 @@
     if(!S.db) return Promise.resolve();
     var ref=id?S.db.doc('ledger/'+id):S.db.collection('ledger').doc();
     body.updatedAt=nowISO(); body.by=S.me.id||'';
-    if(!id) body.createdAt=nowISO();
+    if(id){
+      /* set 은 문서를 통째로 갈아 끼운다. 손으로 고친다고 해서 이 줄이
+         어디서 왔는지(src)까지 지우면 안 된다. 지우면 같은 문서를 다시
+         처리할 때 줄이 둘로 늘고, 「정산에서 자동」 표시도 사라진다. */
+      var old=S.ledger[id]||{};
+      if(old.src&&!body.src) body.src=old.src;
+      body.createdAt=old.createdAt||nowISO();
+    } else {
+      body.createdAt=nowISO();
+    }
     return ref.set(body);
   }
 
@@ -2298,7 +2311,7 @@
   }
 
   function renderBook(){
-    var canEdit=S.me.canEdit, L=ledRows(), banks=bankList();
+    var canEdit=ledEditable(), L=ledRows(), banks=bankList();
     var ed=S.ledEdit;
     var cur=S.ledDraft||((ed&&ed!=='new')?(S.ledger[ed]||{}):{});
     var months=ledMonths();
@@ -2462,7 +2475,7 @@
   }
 
   function renderBanks(){
-    var L=bankList(), canEdit=S.me.canEdit;
+    var L=bankList(), canEdit=ledEditable();
     var ed=S.bankEdit, cur=(ed&&ed!=='new')?(S.banks[ed]||{}):{};
     var total=L.reduce(function(a,b){ return a+bankBal(b.id); },0);
 
@@ -4068,6 +4081,12 @@
   }
   function removeDoc(){
     var id=S.docSel; if(!S.db||!id)return;
+    /* 장부에 전표가 꽂힌 문서는 지울 수 없다. 행사와 같은 이유다 —
+       통장에서는 돈이 나갔는데 왜 나갔는지가 사라진다. */
+    if(ledBySrc('doc:'+id)){
+      S.confirmDocDel=null; render();
+      return errbar('이 문서로 장부에 전표가 들어가 있어 지울 수 없습니다. 회계 → 장부에서 먼저 정리해 주세요');
+    }
     S.db.doc('docs/'+id).delete().then(function(){S.confirmDocDel=null;S.docSel=null;remember();flash('문서를 삭제했습니다');render();})
       .catch(function(e){errbar('삭제 실패 '+(e&&e.code||''));});
   }
@@ -4108,6 +4127,15 @@
   }
   function removeEvent(){
     var id=S.sel,ev=S.events[id]; if(!S.db||!ev)return;
+    /* 장부에 이 행사로 오간 돈이 있으면 지울 수 없다.
+       행사만 지우면 그 줄들은 통장 잔액에는 남은 채 행사별 수지에서만
+       사라진다. 돈은 통장에서 움직였는데 어디에 쓴 돈인지 알 수 없게 된다. */
+    var tied=0;
+    Object.keys(S.ledger).forEach(function(k){ if((S.ledger[k]||{}).ev===id) tied++; });
+    if(tied){
+      S.confirmDel=null; render();
+      return errbar('장부에 이 행사로 오간 돈이 '+tied+'건 있어 지울 수 없습니다. 회계 → 장부에서 먼저 정리해 주세요');
+    }
     var jobs=apprOf(id).map(function(a){return S.db.doc('approvals/'+id+'__'+a.kind+'__'+a.uid).delete().catch(function(){});});
     Promise.all(jobs).then(function(){return S.db.doc('events/'+id).delete();})
       .then(function(){S.confirmDel=null;S.sel=null;remember();flash('행사를 삭제했습니다');render();})
@@ -4123,7 +4151,15 @@
       var gross=compute(ev).payTotal;
       /* 통장에서 실제로 나간 돈. 원천세를 떼고 보내셨으면 세후다.
          원천세는 익월 10일에 따로 나가므로 그때 한 줄 더 적으시면 된다. */
-      var tx=taxOf(gross), net=wh?(gross-tx.inc-tx.loc):gross;
+      /* 원천세는 사람마다 뗀다. 총액에 한 번 걸면 1원 단위에서
+         지급명세서와 어긋난다 — 신고 서류와 통장 잔액이 안 맞는다. */
+      var cc=compute(ev), txTot=0;
+      (ev.members||[]).forEach(function(m,i){
+        var a=(m.w?cc.rate:0)+num(cc.alloc[i],0);
+        if(a<=0) return;
+        var t=taxOf(a); txTot+=t.inc+t.loc;
+      });
+      var net=wh?(gross-txTot):gross;
       ev.status='paid'; ev.paidOn=on;
       S.db.doc('events/'+ev.id).update({status:'paid',paidOn:on,updatedAt:nowISO()})
         .then(function(){
@@ -4136,7 +4172,7 @@
             party:(ev.members||[]).length+'명',
             memo:(ev.name||'행사')+' 사례비',
             way:'계좌이체',
-            note:wh?('세전 '+won(gross)+' · 원천세 '+won(tx.inc+tx.loc)+' 공제'):'원천세 공제 없음'
+            note:wh?('세전 '+won(gross)+' · 원천세 '+won(txTot)+' 공제'):'원천세 공제 없음'
           }).then(function(){
             flash(on+' 지급 · 장부에 '+won(net)+' 넣었습니다'); render();
           });
