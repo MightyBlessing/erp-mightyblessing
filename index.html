@@ -490,7 +490,8 @@
     members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,memberEdit:null,
     people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false,
     banks:{},ledger:{},acctMain:'spend',bankEdit:null,bankDel:null,
-    ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:''};
+    ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
+    rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -2007,6 +2008,122 @@
       }).join('')+'</select></div>';
   }
 
+  /* ─── 행사 수입 ───
+     한 행사에 돈이 한 번에 들어오는 일은 드물다. 계약금 받고 끝나고
+     잔금 받는다. 그래서 여러 건으로 받고 각각 장부에 꽂는다.
+
+     수입 금액(ev.rev)은 '받기로 한 돈'이고 여기 쌓이는 건 '실제로
+     들어온 돈'이다. 둘의 차이가 미수금이다. */
+  function rcvList(ev){
+    var L=(ev&&ev.rcvs)||[];
+    return L.slice().sort(function(a,b){ return String(a.on||'').localeCompare(String(b.on||'')); });
+  }
+  function rcvTotal(ev){
+    return rcvList(ev).reduce(function(a,r){ return a+num(r.amt,0); },0);
+  }
+  /* 받기로 한 돈. 직접 입력 방식이면 알 수 없으니 0 으로 둔다. */
+  function revPlanned(ev){ return ev&&ev.mode==='calc'?num(ev.rev,0):0; }
+  function rcvDue(ev){
+    var plan=revPlanned(ev); if(!plan) return 0;
+    return plan-rcvTotal(ev);
+  }
+  function addRcv(ev){
+    if(!S.db||!ev) return;
+    var on=String(S.rcvOn||'').slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('받은 날짜를 넣어주세요');
+    var amt=num(S.rcvAmt,0);
+    if(amt<=0) return errbar('받은 금액을 넣어주세요');
+    var rid='r'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+    var row={id:rid,on:on,amt:amt,bank:S.rcvBank||'',memo:(S.rcvMemo||'').trim(),by:S.me.id||'',at:nowISO()};
+    var next=((ev.rcvs)||[]).concat([row]);
+    S.db.doc('events/'+ev.id).update({rcvs:next,updatedAt:nowISO()}).then(function(){
+      S.rcvOpen=false; S.rcvOn=''; S.rcvAmt=''; S.rcvMemo='';
+      if(!row.bank){ flash('받은 수입을 적었습니다'); return render(); }
+      return postLed('rev:'+ev.id+':'+rid,{
+        on:on, dir:'in', amt:amt, bank:row.bank,
+        biz:'다. 예배운영', item:'행사 수입',
+        party:(ev.name||'').slice(0,40),
+        memo:(ev.name||'행사')+' 수입'+(row.memo?' · '+row.memo:''),
+        way:'계좌이체'
+      }).then(function(){ flash(won(amt)+' 받음 · 장부에 넣었습니다'); render(); });
+    }).catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+  }
+  function delRcv(ev,rid){
+    if(!S.db||!ev) return;
+    var next=((ev.rcvs)||[]).filter(function(r){ return r.id!==rid; });
+    S.db.doc('events/'+ev.id).update({rcvs:next,updatedAt:nowISO()}).then(function(){
+      S.rcvDel=null;
+      /* 장부 줄도 같이 지운다. 안 그러면 안 들어온 돈이 통장에 남는다. */
+      var lid=ledBySrc('rev:'+ev.id+':'+rid);
+      if(lid) return S.db.doc('ledger/'+lid).delete();
+    }).then(function(){ flash('지웠습니다'); render(); })
+     .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+  }
+
+  function rcvPanel(ev,ro){
+    var L=rcvList(ev), got=rcvTotal(ev), plan=revPlanned(ev), due=rcvDue(ev);
+    var banks=bankList();
+
+    var rows=L.map(function(r){
+      return '<tr>'+
+        '<td style="white-space:nowrap">'+esc(r.on||'')+'</td>'+
+        '<td>'+esc(r.memo||'수입')+
+          (r.bank?'<div style="font-size:12px;color:var(--muted)">'+esc(bankName(r.bank)||'')+'</div>'
+                 :'<div style="font-size:12px;color:var(--zero)">장부에 안 넣음</div>')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(num(r.amt,0))+'</td>'+
+        (ro?'':'<td style="width:96px">'+
+          (S.rcvDel===r.id
+            ? '<button class="btn danger sm" data-rcvyes="'+esc(r.id)+'">지움</button>'+
+              '<button class="btn sm" id="rcvNo" style="margin-left:4px">취소</button>'
+            : '<button class="del" data-rcvdel="'+esc(r.id)+'" aria-label="삭제">×</button>')+
+        '</td>')+
+      '</tr>';
+    }).join('');
+
+    var form='';
+    if(!ro&&S.rcvOpen){
+      form='<div style="border-top:1px solid var(--line);margin-top:12px;padding-top:12px">'+
+        '<div class="row3">'+
+          '<div class="field"><label for="rcvOn">받은 날</label>'+
+            '<input id="rcvOn" type="date" value="'+esc(S.rcvOn||today())+'"></div>'+
+          '<div class="field"><label for="rcvAmt">금액</label>'+
+            '<input id="rcvAmt" type="number" value="'+esc(String(S.rcvAmt||''))+'"'+
+            (due>0?' placeholder="남은 '+won(due).replace(/"/g,'')+'"':'')+'></div>'+
+          '<div class="field"><label for="rcvBank">들어온 통장</label>'+
+            '<select id="rcvBank">'+
+              (banks.length?'<option value="">— 장부에 안 넣음 —</option>':'<option value="">통장 없음</option>')+
+              banks.map(function(b){
+                return '<option value="'+esc(b.id)+'"'+(S.rcvBank===b.id?' selected':'')+'>'+esc(b.name)+'</option>';
+              }).join('')+'</select></div>'+
+        '</div>'+
+        '<div class="field"><label for="rcvMemo">메모</label>'+
+          '<input id="rcvMemo" value="'+esc(S.rcvMemo||'')+'" placeholder="예: 계약금 · 잔금"></div>'+
+        '<div class="actions"><button class="btn primary sm" id="rcvSave">넣기</button>'+
+          '<button class="btn sm" id="rcvCancel">취소</button></div>'+
+      '</div>';
+    }
+
+    return '<section class="card"><h2>받은 수입'+
+      (!ro&&!S.rcvOpen?' <button class="btn primary sm" id="rcvNew" style="float:right">수입 받음</button>':'')+'</h2>'+
+      (L.length
+        ? '<div class="scroll"><table><thead><tr><th>받은 날</th><th>내역</th><th class="num">금액</th>'+(ro?'':'<th></th>')+'</tr></thead>'+
+          '<tbody>'+rows+
+          '<tr><th>합계</th><th></th><th class="num" style="font-family:var(--font-num)">'+won(got)+'</th>'+(ro?'':'<th></th>')+'</tr>'+
+          '</tbody></table></div>'
+        : '<div class="empty" style="padding:18px 8px">아직 들어온 돈이 없습니다.</div>')+
+      (plan
+        ? '<div class="note '+(due>0?'n-warn':(due<0?'n-info':'n-ok'))+'" style="margin:12px 0 0">'+
+            (due>0
+              ? '<b>미수금 '+won(due)+'</b> — 받기로 한 '+won(plan)+' 중 '+won(got)+' 들어왔습니다.'
+              : due<0
+                ? '받기로 한 '+won(plan)+'보다 '+won(-due)+' 더 들어왔습니다. 수입 금액을 확인해 주세요.'
+                : '받기로 한 '+won(plan)+'이 모두 들어왔습니다.')+
+          '</div>'
+        : '<p class="hint" style="margin-top:10px">「수입 − 운영비 − 세금」으로 바꾸시면 미수금도 같이 보여드립니다.</p>')+
+      form+
+    '</section>';
+  }
+
   function saveLedForm(){
     var v=function(id){ var e=$('#'+id); return e?e.value:''; };
     var dir=v('ldDir')||'out';
@@ -2443,6 +2560,7 @@
             sg('cCarry','이월',ev.capMode!=='redistribute',ro)+sg('cRedist','재배분',ev.capMode==='redistribute',ro)+'</div></div>'+
         '</section>'+
       '</div><div class="stack" style="min-width:0">'+
+        rcvPanel(ev,!writable())+
         '<section class="card"><h2>계산 과정</h2><div class="chain">'+
           chain.map(function(r,i){return '<div'+(i===chain.length-1?' class="tot"':'')+'><span class="lab">'+r[0]+'</span><span>'+r[1]+'</span></div>';}).join('')+
         '</div></section>'+
@@ -3465,6 +3583,15 @@
       return;
     }
     /* ── 거래 ── */
+    /* ── 받은 수입 ── */
+    if(t.id==='rcvNew'){ S.rcvOpen=true; S.rcvOn=today(); render(); return; }
+    if(t.id==='rcvCancel'){ S.rcvOpen=false; S.rcvAmt=''; S.rcvMemo=''; render(); return; }
+    if(t.id==='rcvSave'){ var evr=S.sel&&S.events[S.sel]; if(evr) addRcv(evr); return; }
+    if((el=t.closest('[data-rcvdel]'))){ S.rcvDel=el.dataset.rcvdel; render(); return; }
+    if(t.id==='rcvNo'){ S.rcvDel=null; render(); return; }
+    if((el=t.closest('[data-rcvyes]'))){
+      var evd=S.sel&&S.events[S.sel]; if(evd) delRcv(evd,el.dataset.rcvyes); return;
+    }
     if(t.id==='ldNew'){ S.ledEdit='new'; S.ledDraft=null; render(); return; }
     if(t.id==='ldCancel'){ S.ledEdit=null; S.ledDraft=null; render(); return; }
     if((el=t.closest('[data-ldedit]'))){ S.ledEdit=el.dataset.ldedit; S.ledDraft=null; render(); return; }
@@ -3622,6 +3749,10 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='rcvOn'){ S.rcvOn=t.value; return; }
+    if(t.id==='rcvAmt'){ S.rcvAmt=t.value; return; }
+    if(t.id==='rcvBank'){ S.rcvBank=t.value; return; }
+    if(t.id==='rcvMemo'){ S.rcvMemo=t.value; return; }
     if(t.id==='payBank'||t.id==='evPayBank'){ S.payBank=t.value; return; }
     if(t.id==='evPayWh'){ S.payWh=!!t.checked; return; }
     if(t.id==='ldfMonth'){ S.ledMonth=t.value; render(); return; }
@@ -3905,6 +4036,7 @@
     flush();
     S.view='dash'; S.sel=null; S.docSel=null;
     S.confirmDel=null; S.confirmDocDel=null; S.confirmPay=null; S.newPanel=null;
+    S.rcvOpen=false; S.rcvDel=null; S.rcvAmt=''; S.rcvMemo='';
     remember(); render();
     try{ window.scrollTo(0,0); }catch(e){}
   }
