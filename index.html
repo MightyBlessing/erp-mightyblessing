@@ -491,7 +491,7 @@
     people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false,
     banks:{},ledger:{},acctMain:'spend',bankEdit:null,bankDel:null,
     ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
-    rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null};
+    rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -2014,6 +2014,13 @@
 
      수입 금액(ev.rev)은 '받기로 한 돈'이고 여기 쌓이는 건 '실제로
      들어온 돈'이다. 둘의 차이가 미수금이다. */
+  /* 장부에 매달 수 있는 행사. 최근 것부터. */
+  function evChoices(){
+    return Object.keys(S.events).map(function(k){
+      var e=clone(S.events[k]); e.id=k; return e;
+    }).sort(function(a,b){ return String(b.date||'').localeCompare(String(a.date||'')); });
+  }
+
   function rcvList(ev){
     var L=(ev&&ev.rcvs)||[];
     return L.slice().sort(function(a,b){ return String(a.on||'').localeCompare(String(b.on||'')); });
@@ -2041,6 +2048,7 @@
       if(!row.bank){ flash('받은 수입을 적었습니다'); return render(); }
       return postLed('rev:'+ev.id+':'+rid,{
         on:on, dir:'in', amt:amt, bank:row.bank,
+        ev:ev.id,
         biz:'다. 예배운영', item:'행사 수입',
         party:(ev.name||'').slice(0,40),
         memo:(ev.name||'행사')+' 수입'+(row.memo?' · '+row.memo:''),
@@ -2124,6 +2132,129 @@
     '</section>';
   }
 
+  /* 사업을 「다. 예배운영」으로 바꾸면 행사 고르개가 나타난다.
+     그때도 적던 내용은 들고 넘어간다. */
+  function ledBizChanged(biz){
+    var g=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var d=S.ledDraft||((S.ledEdit&&S.ledEdit!=='new')?clone(S.ledger[S.ledEdit]||{}):{});
+    var was=d.biz;
+    d.biz=biz; d.dir=g('ldDir')||d.dir; d.on=g('ldOn')||d.on; d.amt=num(g('ldAmt'),0)||d.amt;
+    d.bank=g('ldBank')||d.bank; d.item=g('ldItem'); d.party=g('ldParty');
+    d.memo=g('ldMemo'); d.note=g('ldNote'); d.way=g('ldWay')||d.way; d.payer=g('ldPayer');
+    if(biz!=='다. 예배운영') d.ev='';
+    S.ledDraft=d;
+    /* 행사 칸이 생기거나 사라질 때만 다시 그린다 */
+    if((was==='다. 예배운영')!==(biz==='다. 예배운영')) render();
+  }
+
+  /* ─── 행사별 수지 ───
+     손익보고서와 다른 점: 여기는 장부만 본다. 통장에 실제로 오간 돈이다.
+     계약은 1,500만인데 500만만 들어왔으면 여기엔 500만으로 잡힌다.
+     받기로 한 돈과의 차이는 미수금으로 따로 보여준다. */
+  function evLedger(evId){
+    var inn=0,out=0,fee=0,rows=[];
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{};
+      if(r.ev!==evId) return;
+      if(r.dir==='move') return;          /* 통장 사이 이동은 행사 돈이 아니다 */
+      var a=num(r.amt,0);
+      if(r.dir==='in') inn+=a;
+      else { out+=a; if(r.item==='사례비') fee+=a; }
+      var row=clone(r); row.id=k; rows.push(row);
+    });
+    rows.sort(function(a,b){ return String(a.on||'').localeCompare(String(b.on||'')); });
+    return {inn:inn, out:out, fee:fee, other:out-fee, bal:inn-out, rows:rows, n:rows.length};
+  }
+  function evplRows(){
+    return evChoices().map(function(e){
+      var g=evLedger(e.id);
+      g.e=e; g.plan=revPlanned(e); g.got=rcvTotal(e); g.due=rcvDue(e);
+      return g;
+    }).filter(function(g){
+      /* 장부에 한 줄이라도 있거나, 받기로 한 돈이 있는 행사만 */
+      return g.n>0 || g.plan>0;
+    });
+  }
+
+  function renderEvPl(){
+    var L=evplRows();
+    var T=L.reduce(function(a,g){
+      a.inn+=g.inn; a.out+=g.out; a.fee+=g.fee; a.bal+=g.bal; a.due+=Math.max(0,g.due); return a;
+    },{inn:0,out:0,fee:0,bal:0,due:0});
+
+    var sel=S.evplSel&&L.filter(function(g){return g.e.id===S.evplSel;})[0];
+
+    var rows=L.map(function(g){
+      var on=S.evplSel===g.e.id;
+      return '<tr'+(on?' style="background:var(--accent-soft)"':'')+'>'+
+        '<td><button class="linkbtn" data-evpl="'+esc(g.e.id)+'"><b>'+esc(g.e.name||'(이름 없음)')+'</b></button>'+
+          (g.e.date?'<div style="font-size:12px;color:var(--muted)">'+esc(g.e.date)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(g.inn)+
+          (g.due>0?'<div style="font-size:11.5px;color:var(--warn)">미수 '+won(g.due)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(g.fee)+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(g.other)+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);font-weight:600'+
+          (g.bal<0?';color:var(--bad)':'')+'">'+won(g.bal)+'</td>'+
+      '</tr>';
+    }).join('');
+
+    var detail='';
+    if(sel){
+      detail='<section class="card"><h2>'+esc(sel.e.name||'행사')+' — 오간 돈'+
+        ' <button class="btn sm" id="evplClose" style="float:right">닫기</button></h2>'+
+        (sel.rows.length
+          ? '<div class="scroll"><table><thead><tr><th>날짜</th><th>내역</th><th>통장</th><th class="num">금액</th></tr></thead><tbody>'+
+            sel.rows.map(function(r){
+              var a=num(r.amt,0), isIn=r.dir==='in';
+              return '<tr><td style="white-space:nowrap">'+esc(r.on||'')+'</td>'+
+                '<td>'+esc(r.memo||r.item||'')+
+                  (r.item?'<div style="font-size:12px;color:var(--muted)">'+esc(r.item)+'</div>':'')+'</td>'+
+                '<td style="color:var(--muted);font-size:12.5px">'+esc(bankName(r.bank)||'—')+'</td>'+
+                '<td class="num" style="font-family:var(--font-num);white-space:nowrap;color:var('+
+                  (isIn?'--accent-ink':'--bad')+')">'+(isIn?'+':'−')+won(a)+'</td></tr>';
+            }).join('')+
+            '<tr><th>남음</th><th></th><th></th><th class="num" style="font-family:var(--font-num)">'+won(sel.bal)+'</th></tr>'+
+            '</tbody></table></div>'
+          : '<div class="empty" style="padding:20px 8px">장부에 이 행사로 매단 줄이 없습니다.</div>')+
+        (sel.due>0
+          ? '<div class="note n-warn" style="margin:12px 0 0"><b>미수금 '+won(sel.due)+'</b> — '+
+            '받기로 한 '+won(sel.plan)+' 중 '+won(sel.got)+'만 들어왔습니다. 들어오면 정산 화면에서 적어주세요.</div>'
+          : '')+
+      '</section>';
+    }
+
+    app.innerHTML=
+      '<div class="stack">'+
+      acctTabs()+
+      '<div class="tiles">'+
+        tile('들어온 돈', won(T.inn), L.length+'개 행사')+
+        tile('사례비', won(T.fee), '지급 완료분')+
+        tile('그 밖의 지출', won(T.out-T.fee), '지출결의서 등')+
+        tile('남은 돈', won(T.bal), T.bal<0?'나간 돈이 더 많습니다':'', T.bal<0)+
+        tile('미수금', won(T.due), T.due>0?'아직 안 들어왔습니다':'모두 들어왔습니다', T.due>0)+
+      '</div>'+
+      '<section class="card"><h2>행사별 수지</h2>'+
+        (L.length
+          ? '<div class="scroll"><table><thead><tr>'+
+              '<th>행사</th><th class="num">들어옴</th><th class="num">사례비</th>'+
+              '<th class="num">그 밖</th><th class="num">남음</th>'+
+            '</tr></thead><tbody>'+rows+
+            '<tr><th>합계</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(T.inn)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(T.fee)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(T.out-T.fee)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(T.bal)+'</th></tr>'+
+            '</tbody></table></div>'+
+            '<p class="hint" style="margin-top:10px">행사 이름을 누르면 오간 돈을 하나씩 볼 수 있습니다. '+
+              '<b>여기는 통장에 실제로 오간 돈만 셉니다.</b> 아직 안 들어온 돈은 미수금으로 따로 적어뒀습니다. '+
+              '계약 기준 손익은 보고서 탭에 있습니다.</p>'
+          : '<div class="empty" style="padding:24px 8px">아직 행사에 매달린 거래가 없습니다.<br>'+
+            '정산에서 수입을 받거나 사례비를 지급하면 여기에 모입니다.</div>')+
+      '</section>'+
+      detail+
+      '</div>';
+  }
+
   function saveLedForm(){
     var v=function(id){ var e=$('#'+id); return e?e.value:''; };
     var dir=v('ldDir')||'out';
@@ -2153,6 +2284,7 @@
     } else {
       body.biz=v('ldBiz'); body.item=v('ldItem').trim(); body.party=v('ldParty').trim();
       body.way=v('ldWay'); body.payer=v('ldPayer').trim();
+      body.ev=(body.biz==='다. 예배운영')?v('ldEv'):'';
     }
 
     var lid=S.ledEdit==='new'?null:S.ledEdit;
@@ -2219,6 +2351,15 @@
                 '<select id="ldBiz"><option value=""></option>'+BIZ.map(function(b){
                   return opt(b,cur.biz); }).join('')+'</select></div>')+
         '</div>'+
+        (dirNow!=='move'&&cur.biz==='다. 예배운영'
+          ? '<div class="field"><label for="ldEv">행사</label>'+
+              '<select id="ldEv"><option value="">— 고르지 않음 —</option>'+
+              evChoices().map(function(e){
+                return '<option value="'+esc(e.id)+'"'+(cur.ev===e.id?' selected':'')+'>'+
+                  esc(e.name||'(이름 없음)')+(e.date?' · '+esc(e.date):'')+'</option>';
+              }).join('')+'</select>'+
+              '<p class="hint" style="margin:6px 0 0">행사를 매달아야 「행사별」에서 수지가 나옵니다.</p></div>'
+          : '')+
         (dirNow==='move'
           ? '<p class="hint" style="margin:-4px 0 12px">한 번만 넣으시면 보낸 통장에서 빠지고 받은 통장에 더해집니다. '+
             '두 줄로 적지 않으셔도 됩니다.</p>'
@@ -2665,7 +2806,7 @@
 
   function acctTabs(){
     return '<div class="tabs" style="margin:0 0 14px">'+
-      [['spend','지출 현황'],['book','장부'],['banks','통장']].map(function(x){
+      [['spend','지출 현황'],['book','장부'],['evpl','행사별'],['banks','통장']].map(function(x){
         return '<button type="button" data-amain="'+x[0]+'" aria-pressed="'+(S.acctMain===x[0]?'true':'false')+'">'+x[1]+
           (x[0]==='book'?'<span class="n">'+Object.keys(S.ledger).length+'</span>':'')+
           (x[0]==='banks'?'<span class="n">'+Object.keys(S.banks).length+'</span>':'')+'</button>';
@@ -2674,6 +2815,7 @@
 
   function renderAcct(){
     if(S.acctMain==='book')  return renderBook();
+    if(S.acctMain==='evpl')  return renderEvPl();
     if(S.acctMain==='banks') return renderBanks();
     var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
     var pending=approved.filter(function(d){return payState(d)==='pending';});
@@ -2774,6 +2916,7 @@
       var ev=d.eventId?S.events[d.eventId]:null;
       postLed('doc:'+d.id,{
         on:on, dir:'out', amt:expTotal(d), bank:bank,
+        ev:(d.eventId||''),
         biz:ev?'다. 예배운영':'가. 운영비',
         item:(d.account||d.title||'').slice(0,40),
         party:(d.payee||'').slice(0,40),
@@ -3583,6 +3726,11 @@
       return;
     }
     /* ── 거래 ── */
+    if((el=t.closest('[data-evpl]'))){
+      var eid=el.dataset.evpl;
+      S.evplSel=(S.evplSel===eid)?null:eid; render(); return;
+    }
+    if(t.id==='evplClose'){ S.evplSel=null; render(); return; }
     /* ── 받은 수입 ── */
     if(t.id==='rcvNew'){ S.rcvOpen=true; S.rcvOn=today(); render(); return; }
     if(t.id==='rcvCancel'){ S.rcvOpen=false; S.rcvAmt=''; S.rcvMemo=''; render(); return; }
@@ -3759,6 +3907,8 @@
     if(t.id==='ldfBank'){ S.ledBank=t.value; render(); return; }
     if(t.id==='ldfBiz'){ S.ledBiz=t.value; render(); return; }
     if(t.id==='ldDir'){ return ledDirChanged(t.value); }
+    if(t.id==='ldBiz'){ return ledBizChanged(t.value); }
+    if(t.id==='ldEv'){ if(S.ledDraft) S.ledDraft.ev=t.value; return; }
     if(t.dataset&&t.dataset.whrole!==undefined){
       var pid=t.dataset.whrole, pv=clone(S.people[pid]||{});
       pv.taxRole=t.value; pv.updatedAt=nowISO();
@@ -3981,6 +4131,7 @@
           if(!bank){ flash(on+' 지급으로 기록했습니다'); return render(); }
           return postLed('ev:'+ev.id,{
             on:on, dir:'out', amt:net, bank:bank,
+            ev:ev.id,
             biz:'다. 예배운영', item:'사례비',
             party:(ev.members||[]).length+'명',
             memo:(ev.name||'행사')+' 사례비',
