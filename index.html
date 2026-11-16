@@ -615,8 +615,16 @@
         }
         return B.put(d.id,f.name,f.type||'application/octet-stream',f).then(function(m){ added.push(m); });
       }).catch(function(e){
-        var msg=(e&&(e.message||e.error||e.code))||'';
-        if(/bucket/i.test(String(msg))) msg='증빙 보관함(evidence)이 아직 없습니다. supabase/storage.sql 을 한 번 실행해 주세요.';
+        var raw=String((e&&(e.message||e.error||e.code))||e||'');
+        var msg=raw;
+        if(/bucket not found|no such bucket/i.test(raw))
+          msg='증빙 보관함(evidence)이 없습니다. supabase/storage.sql 을 한 번 실행해 주세요.';
+        else if(/row-level security|violates|policy|unauthorized|not authorized|403/i.test(raw))
+          msg='보관함에 올릴 권한이 없습니다. supabase/storage.sql 을 다시 실행해 주세요. (받은 내용: '+raw+')';
+        else if(/payload too large|413|exceeded the maximum/i.test(raw))
+          msg='파일이 보관함 한도를 넘었습니다.';
+        else if(/jwt|token|expired/i.test(raw))
+          msg='로그인이 만료되었습니다. 새로고침한 뒤 다시 올려주세요.';
         errbar((f.name||'파일')+' — '+msg);
       });
     });
@@ -671,7 +679,11 @@
     var fs=evFiles(d), can=canAttach(d), st=docStatus(d);
     var grid=fs.map(function(m,i){
       var del=can&&(m.by===S.me.id||S.me.canEdit)&&(payState(d)!=='paid'||S.me.canEdit);
-      var face=m.th||m.u&&/^image\//.test(m.t||'')?m.th||m.u:'';
+      /* 보관함에 올린 파일은 th(작은 미리보기)만 문서에 남는다.
+         체험 모드는 보관함이 없어 u(파일 그 자체)를 쓴다. */
+      var face='';
+      if(m.th) face=m.th;
+      else if(m.u&&/^image\//.test(m.t||'')) face=m.u;
       return '<div class="ev'+(S.confirmFile===i?' sure':'')+'">'+
         (face
           ? '<button type="button" class="shot" data-evopen="'+i+'" style="background-image:url('+face+')" aria-label="'+esc(m.n)+' 열기"></button>'
