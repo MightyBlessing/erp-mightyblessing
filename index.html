@@ -871,18 +871,50 @@
       var img=new Image();
       img.onerror=function(){errbar('그림 형식을 읽지 못했습니다. PNG 또는 JPG로 올려주세요.');};
       img.onload=function(){
-        var N=220, cv=document.createElement('canvas'); cv.width=N; cv.height=N;
-        var ctx=cv.getContext('2d');
-        var r=Math.min(N/img.width,N/img.height), w=img.width*r, h=img.height*r;
-        ctx.drawImage(img,(N-w)/2,(N-h)/2,w,h);
         var out;
-        try{ out=cv.toDataURL('image/png'); }catch(e){ return errbar('그림을 변환하지 못했습니다'); }
+        try{ out=makeSeal(img); }catch(e){ return errbar('그림을 변환하지 못했습니다'); }
+        if(!out) return errbar('직인을 찾지 못했습니다. 배경이 밝은 그림인지 확인해 주세요.');
         saveSeal(out);
       };
       img.src=fr.result;
     };
     fr.readAsDataURL(file);
   }
+  /* 올린 그림에서 흰 배경을 빼고, 인장 부분만 잘라 220px 정사각 PNG로 만든다.
+     스캔한 직인은 대개 흰 종이 위에 찍혀 있어서, 그대로 쓰면 공문 글자를 가린다. */
+  function makeSeal(img){
+    var W=img.width, H=img.height;
+    var c0=document.createElement('canvas'); c0.width=W; c0.height=H;
+    var x0=c0.getContext('2d'); x0.drawImage(img,0,0);
+    var im=x0.getImageData(0,0,W,H), px=im.data;
+    var minX=W, minY=H, maxX=-1, maxY=-1;
+    for(var y=0;y<H;y++){
+      for(var x=0;x<W;x++){
+        var i=(y*W+x)*4, r=px[i], g=px[i+1], b=px[i+2], a=px[i+3];
+        if(a<8){ continue; }
+        var mx=Math.max(r,g,b), mn=Math.min(r,g,b);
+        /* 밝고 색이 없는 화소 = 종이. 투명하게 만든다. */
+        if(mn>205 && mx-mn<26){ px[i+3]=0; continue; }
+        /* 옅은 회색 테두리는 부드럽게 깎아 계단을 줄인다 */
+        if(mn>170 && mx-mn<26){ px[i+3]=Math.round(a*(205-mn)/35); if(px[i+3]<8) continue; }
+        if(x<minX)minX=x; if(x>maxX)maxX=x;
+        if(y<minY)minY=y; if(y>maxY)maxY=y;
+      }
+    }
+    if(maxX<0) return null;
+    x0.putImageData(im,0,0);
+    var pad=Math.round(Math.max(maxX-minX,maxY-minY)*0.04);
+    minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
+    maxX=Math.min(W-1,maxX+pad); maxY=Math.min(H-1,maxY+pad);
+    var cw=maxX-minX+1, ch=maxY-minY+1;
+    var N=220, cv=document.createElement('canvas'); cv.width=N; cv.height=N;
+    var ctx=cv.getContext('2d');
+    ctx.imageSmoothingQuality='high';
+    var r2=Math.min(N/cw,N/ch), dw=cw*r2, dh=ch*r2;
+    ctx.drawImage(c0,minX,minY,cw,ch,(N-dw)/2,(N-dh)/2,dw,dh);
+    return cv.toDataURL('image/png');
+  }
+
   function saveSeal(dataUrl){
     if(!S.db)return;
     S.db.doc('config/seal').set({dataUrl:dataUrl||'',updatedAt:nowISO()})
