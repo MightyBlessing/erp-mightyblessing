@@ -330,6 +330,8 @@
   .doc table.ov th,.doc table.ov td{border:1px solid #c9cdd3; padding:6px 9px; vertical-align:top; color:#15171a}
   .doc table.ov th{width:96px; background:#F2F3F5; font-weight:500; text-align:left; white-space:nowrap}
   .doc .end{text-align:right; margin-top:10px}
+  .doc .att{display:flex; gap:12px; align-items:baseline; margin-top:14px}
+  .doc .att b{font-weight:400; color:#15171a; flex:0 0 auto; letter-spacing:.16em; margin-right:-.16em}
   .doc .sign{text-align:center; margin:34px 0 10px; position:relative}
   .doc .sign .nm{font-size:19px; font-weight:700; letter-spacing:.02em; position:relative; display:inline-block}
   /* 직인은 발신명의 끝 글자에 걸쳐 찍는다. 실제 공문이 그렇게 생겼다. */
@@ -453,9 +455,16 @@
          '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
          '이에 원활한 진행을 위하여 아래와 같이 협조를 요청드리오니, 살펴주시기를 바랍니다.'],
       k:['행사명','행사목적','일시','장소','주관','협조 요청 사항','담당자','기타사항']},
+    meeting:{
+      t:'회의 결과 보고의 건',
+      scope:'in',
+      p:['아래와 같이 회의를 진행하였기에 그 결과를 보고합니다.',
+         '결정된 사항은 아래 개요와 같으며, 후속 조치는 담당자별로 진행하겠습니다.'],
+      k:['회의명','일시','장소','참석자','주요 논의','결정사항','후속 조치','비고']},
     blank:{ t:'', p:[''], k:[] }
   };
-  var FORM_LABEL={rent:'장소 대관 요청',propose:'행사 제안',notice:'행사 협조 요청',blank:'기타 (직접 작성)'};
+  var FORM_LABEL={rent:'장소 대관 요청',propose:'행사 제안',notice:'행사 협조 요청',
+                  meeting:'회의 결과 보고',blank:'기타 (직접 작성)'};
   /* 계정과목 — 장부 분류. 세무·결산에서 이 단위로 묶인다. */
   var ACCOUNTS=['사례비','인건비','임차료','장비·대여','재료비','인쇄·홍보','교통비','식비','수수료','기타'];
   var METHODS={bank:'계좌이체',card:'법인카드',cash:'현금'};
@@ -576,8 +585,9 @@
     if(!writable())return false;
     var st=docStatus(d);
     if(st==='draft')    return d.drafter===S.me.id||S.me.canEdit;
-    /* 승인 뒤에는 회계가 이체확인증을 붙여야 한다 */
-    if(st==='approved') return myRole()==='accounting'||S.me.canEdit;
+    /* 지출결의서는 승인 뒤에도 회계가 이체확인증을 붙여야 한다.
+       공문은 이미 나간 문서라 손대지 않는다. */
+    if(st==='approved'&&d.type==='expense') return myRole()==='accounting'||S.me.canEdit;
     return false;
   }
   function addEvidence(files){
@@ -613,6 +623,12 @@
       if(!added.length) return render();
       var cur=S.docs[d.id]; if(!cur) return render();
       cur.files=evFiles(cur).concat(added);
+      /* 공문은 올린 파일이 그대로 '붙임' 한 줄이 된다. 사람이 다시 치게 두지 않는다. */
+      if(cur.type!=='expense'){
+        cur.att=(cur.att||[]).concat(added.map(function(m){
+          return {t:String(m.n||'파일').replace(/\.[a-z0-9]+$/i,'')+' 1부.'};
+        }));
+      }
       var body=clone(cur); delete body.id; body.updatedAt=nowISO();
       S.db.doc('docs/'+cur.id).set(body)
         .then(function(){ flash('증빙 '+added.length+'개를 첨부했습니다'); render(); })
@@ -648,7 +664,8 @@
     n=num(n,0);
     return n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB';
   }
-  function evidenceCard(d){
+  function evidenceCard(d,opt){
+    opt=opt||{};
     var fs=evFiles(d), can=canAttach(d), st=docStatus(d);
     var grid=fs.map(function(m,i){
       var del=can&&(m.by===S.me.id||S.me.canEdit)&&(payState(d)!=='paid'||S.me.canEdit);
@@ -665,9 +682,14 @@
       '</div>';
     }).join('');
     var warn='';
-    if(!fs.length&&st!=='draft') warn='<div class="note n-warn" style="margin:0 0 12px">증빙이 없습니다. 영수증·견적서·이체확인증을 붙여두면 결산과 감사 때 이 문서 하나로 끝납니다.</div>';
+    if(opt.doc){
+      warn=fs.length
+        ? '<p class="hint" style="margin:0 0 10px">올린 파일은 아래 <b>붙임</b> 목록에 한 줄씩 들어갑니다. 문구는 고치실 수 있습니다.</p>'
+        : '<p class="hint" style="margin:0 0 10px">회의록·제안서·포스터처럼 공문과 같이 보낼 파일을 올려두세요. 파일은 공문 PDF에 합쳐지지 않고 따로 보관됩니다.</p>';
+    }
+    else if(!fs.length&&st!=='draft') warn='<div class="note n-warn" style="margin:0 0 12px">증빙이 없습니다. 영수증·견적서·이체확인증을 붙여두면 결산과 감사 때 이 문서 하나로 끝납니다.</div>';
     else if(!fs.length&&st==='draft') warn='<p class="hint" style="margin:0 0 10px">영수증·견적서를 미리 붙여두면 결재자가 바로 확인할 수 있습니다.</p>';
-    return '<section class="card"><h2>증빙 '+(fs.length?'('+fs.length+')':'')+'</h2>'+
+    return '<section class="card"><h2>'+(opt.doc?'첨부 파일':'증빙')+' '+(fs.length?'('+fs.length+')':'')+'</h2>'+
       warn+
       (grid?'<div class="evgrid">'+grid+'</div>':'')+
       (can
@@ -675,7 +697,7 @@
             (S.upBusy?'올리는 중…':'눌러서 파일 고르기 · 또는 여기로 끌어다 놓기')+
             '<br><span style="font-size:11px;color:var(--faint)">사진·PDF · 한 개 '+EV_SIZE+'MB까지 · 사진은 자동으로 줄여서 올립니다</span></div>'+
           '<input type="file" id="evFile" accept="image/*,application/pdf" multiple hidden>'
-        : (grid?'':'<div class="empty" style="padding:20px 8px">첨부된 증빙이 없습니다.</div>'))+
+        : (grid?'':'<div class="empty" style="padding:20px 8px">첨부된 파일이 없습니다.</div>'))+
     '</section>';
   }
 
@@ -907,12 +929,15 @@
   }
   function newDocBody(form,scope){
     var f=FORMS[form]||FORMS.rent;
+    /* 회의 결과 보고처럼 성격이 정해진 서식은 기본값을 따로 둔다. */
+    if(f.scope&&!scope) scope=f.scope;
     scope=scope==='in'?'in':'out';
     return {type:'official', form:form||'rent', scope:scope,
       title:f.t||'(제목을 입력하세요)', no:nextNo('official'), date:today(),
       to:'', cc:'', subject:f.t||'',
       paras:f.p.slice(),
       ov:f.k.map(function(k){return {k:k,v:''};}),
+      att:[],
       signer:'마이티블레싱대표', seal:scope!=='in',
       /* 연락처는 비워 둔다 — 저장소가 공개라 코드에 번호를 박지 않는다.
          한 번 입력하면 그 문서에 저장되고, 복사해서 새 문서를 만들면 따라온다. */
@@ -1358,6 +1383,8 @@
         '<section class="card"><h2>행사 개요</h2><div class="scroll"><table>'+ovRows+'</table></div>'+
           (editable?'<div class="actions" style="margin-top:10px"><button class="btn sm" id="ovAdd">+ 항목 추가</button></div>':'')+
         '</section>'+
+        attCard(d)+
+        evidenceCard(d,{doc:true})+
         '<section class="card"><h2>미리보기</h2>'+docPreview(d)+'</section>'+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+printHint+
@@ -1370,6 +1397,25 @@
                box.addEventListener('input',function(){lineSearch(box.value);}); }
     }
   }
+  /* 붙임은 '문구'다. 파일을 올리면 한 줄이 자동으로 생기지만,
+     파일 없이 '별첨 1부.' 처럼 적기만 하는 경우도 있어 따로 둔다. */
+  function attCard(d){
+    var st=docStatus(d);
+    var editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var L=d.att||[];
+    var rows=L.map(function(x,i){
+      return '<div class="para"><span class="n">'+(L.length>1?(i+1)+'.':'·')+'</span>'+
+        '<input data-at="'+i+'" value="'+esc(x&&x.t||'')+'"'+(editable?'':' disabled')+
+        ' placeholder="예: AG-ENT 미팅 회의록 1부.">'+
+        (editable?'<button class="del" data-atdel="'+i+'" aria-label="붙임 삭제">×</button>':'')+'</div>';
+    }).join('');
+    return '<section class="card"><h2>붙임</h2>'+
+      (rows||'<p class="hint" style="margin:0 0 10px">붙임이 없으면 본문 끝에 <b>끝.</b>만 붙습니다.</p>')+
+      (editable?'<div class="actions" style="margin-top:10px"><button class="btn sm" id="atAdd">+ 붙임 추가</button></div>':'')+
+      '<p class="hint" style="margin-top:10px">문서 끝에 <b>붙임  OOO 1부.　끝.</b> 으로 들어갑니다. 아래에서 파일을 올리면 한 줄이 저절로 생깁니다.</p>'+
+    '</section>';
+  }
+
   function fld(type,id,label,val,dis){
     return '<div class="field"><label for="'+id+'">'+label+'</label><input id="'+id+'" type="'+type+'" value="'+esc(val==null?'':val)+'"'+(dis||'')+'></div>';
   }
@@ -1384,7 +1430,7 @@
       (ov.length?'<table class="ov">'+ov.map(function(r,i){
         return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\n/g,'<br>')+'</td></tr>';
       }).join('')+'</table>':'')+
-      '<div class="end">끝.</div>'+
+      attBlock(d)+
       '<div class="sign"><span class="nm">'+esc(d.signer||'')+(d.seal!==false?sealMark(d):'')+'</span></div>'+
       ((d.scope||'out')==='in'
         ? '<hr class="thin"><div class="issue"><b>시행</b><span>'+esc(d.no||'')+' ('+esc(d.date||'')+')</span></div>'
@@ -1395,6 +1441,19 @@
             '<b>메일</b><span>'+esc(d.email||'')+'</span></div>')+
     '</div>';
   }
+  /* 원본 공문은 본문 끝에 붙임 목록을 적고 그 뒤에 바로 '끝.'을 붙인다.
+     붙임이 없으면 '끝.'만 오른쪽에 온다. */
+  function attBlock(d){
+    var L=(d.att||[]).map(function(x){return String(x&&x.t||'').trim();}).filter(Boolean);
+    if(!L.length) return '<div class="end">끝.</div>';
+    if(L.length===1)
+      return '<div class="att"><b>붙임</b><span>'+esc(L[0])+'　　끝.</span></div>';
+    return '<div class="att"><b>붙임</b><span>'+
+      L.map(function(t,i){
+        return (i+1)+'. '+esc(t)+(i===L.length-1?'　　끝.':'');
+      }).join('<br>')+'</span></div>';
+  }
+
   /* 직인은 최종 승인된 문서에만 찍힌다. 그 전에는 자리만 표시한다. */
   function sealMark(d){
     if(docStatus(d)!=='approved') return '<span class="seal">직인<br>위치</span>';
@@ -2321,6 +2380,8 @@
       if(t.id==='dpAdd'){ dc.paras=(dc.paras||[]).concat(['']); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-dpdel]'))){ dc.paras.splice(+el.dataset.dpdel,1); touch('doc',dc.id); render(); return; }
       if(t.id==='ovAdd'){ dc.ov=(dc.ov||[]).concat([{k:'',v:''}]); touch('doc',dc.id); render(); return; }
+      if(t.id==='atAdd'){ dc.att=(dc.att||[]).concat([{t:''}]); touch('doc',dc.id); render(); return; }
+      if((el=t.closest('[data-atdel]'))){ (dc.att||[]).splice(+el.dataset.atdel,1); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-lndel]'))){ dc.steps.splice(+el.dataset.lndel,1); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-lnadd]'))){
         dc.steps=(dc.steps||[]).concat([{uid:el.dataset.lnadd,state:'pending',comment:'',at:''}]);
@@ -2381,6 +2442,7 @@
       if(dmap[t.id]){ dc[dmap[t.id]]=t.value; touch('doc',dc.id); return; }
       if(t.id==='invMail'){ S.inviteMail=t.value; return; }
       if(t.dataset&&t.dataset.dp!==undefined){ dc.paras[+t.dataset.dp]=t.value; touch('doc',dc.id); return; }
+      if(t.dataset&&t.dataset.at!==undefined){ dc.att[+t.dataset.at].t=t.value; touch('doc',dc.id); softPreview(dc); return; }
       if(t.dataset&&t.dataset.ovk!==undefined){ dc.ov[+t.dataset.ovk].k=t.value; touch('doc',dc.id); return; }
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
@@ -2419,7 +2481,14 @@
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='sealFile') return onSealFile(t.files&&t.files[0]);
-    if(t.id==='nform'&&S.newPanel){ S.newPanel.form=t.value; render(); return; }
+    if(t.id==='nform'&&S.newPanel){
+      S.newPanel.form=t.value;
+      /* 회의 결과 보고는 안으로 올리는 문서다. 서식을 고르면 거기 맞춰 바꿔준다.
+         바꾼 뒤에도 대내/대외 단추로 다시 고를 수 있다. */
+      var f=FORMS[t.value];
+      if(f&&f.scope) S.newPanel.scope=f.scope;
+      render(); return;
+    }
     if(t.id==='logoFile') return onLogoFile(t.files&&t.files[0]);
     if(t.id==='avaFile')  return onAvatarFile(t.files&&t.files[0]);
     if(t.id==='evFile'){ addEvidence(t.files); t.value=''; return; }
@@ -2437,6 +2506,17 @@
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
   });
+
+  /* 붙임 줄은 미리보기 맨 끝에만 나온다. 그 한 조각만 갈아끼운다. */
+  function softPreview(d){
+    try{
+      var box=document.querySelector('.card .doc .att, .card .doc .end');
+      if(!box)return;
+      var tmp=document.createElement('div');
+      tmp.innerHTML=attBlock(d);
+      box.parentNode.replaceChild(tmp.firstChild, box);
+    }catch(e){}
+  }
 
   /* 수량·단가를 칠 때마다 전체를 다시 그리면 글자가 튄다. 숫자만 갈아끼운다. */
   function softExpense(d){
