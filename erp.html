@@ -257,13 +257,18 @@
   var ROLE_LABEL={accounting:'회계',ceo:'대표',member:'팀원'};
   var SET_STATUS={draft:'작성중',submitted:'결재중',approved:'승인완료',paid:'지급완료'};
   var DOC_STATUS={draft:'작성중',submitted:'결재대기',progress:'승인진행중',approved:'승인완료',rejected:'반려',canceled:'취소'};
-  var NAV=[{k:'dash',t:'대시보드',i:'▦'},{k:'docs',t:'전자결재',i:'✎'},{k:'settle',t:'정산',i:'₩'},{k:'roles',t:'역할',i:'⚙'}];
+  var NAV=[{k:'dash',t:'대시보드',i:'▦'},{k:'docs',t:'전자결재',i:'✎'},{k:'acct',t:'회계',i:'▤'},{k:'settle',t:'정산',i:'₩'},{k:'roles',t:'역할',i:'⚙'}];
+  var DOC_KIND={official:'공문',expense:'지출결의서'};
+  /* 계정과목 — 장부 분류. 세무·결산에서 이 단위로 묶인다. */
+  var ACCOUNTS=['사례비','인건비','임차료','장비·대여','재료비','인쇄·홍보','교통비','식비','수수료','기타'];
+  var METHODS={bank:'계좌이체',card:'법인카드',cash:'현금'};
+  var PAY_LABEL={pending:'지급대기',paid:'지급완료'};
   var OV_KEYS=['행사명','행사목적','일시','주관','주최/협력','세부장소','참석인원','기타(요청)사항'];
   var OV_LETTER=['가','나','다','라','마','바','사','자'];
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -368,6 +373,22 @@
     if(tab==='rejected')return all.filter(function(d){return docStatus(d)==='rejected';});
     return all;
   }
+  function expTotal(d){
+    return (d.items||[]).reduce(function(a,it){return a+num(it.qty,0)*num(it.price,0);},0);
+  }
+  function payState(d){
+    var p=d.pay||{}; return p.state==='paid'?'paid':'pending';
+  }
+  /* 지출결의서는 공문과 같은 결재 엔진을 쓴다. 승인 이후 단계만 따로 붙는다. */
+  function newExpenseBody(){
+    var y=new Date().getFullYear();
+    return {type:'expense', title:'지출결의서', no:'마블 지출 '+y+'-001', date:today(),
+      eventId:'', account:'기타', method:'bank',
+      payee:'', payeeBank:'', payeeAcct:'', dueDate:'', note:'',
+      items:[{name:'',qty:1,price:0,note:''}],
+      pay:{state:'pending',at:'',by:'',memo:''},
+      steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+  }
   function newDocBody(){
     var y=new Date().getFullYear();
     return {type:'official', title:'장소 대관 요청의 건', no:'마블 제2024/'+y+'-001호', date:today(),
@@ -410,6 +431,7 @@
     if(S.loading){app.innerHTML='<div class="card"><div class="empty"><strong>불러오는 중</strong>잠시만 기다려 주세요.</div></div>';return;}
     if(S.view==='dash')return renderDash();
     if(S.view==='docs')return S.docSel&&S.docs[S.docSel]?renderDoc(S.docs[S.docSel]):renderDocList();
+    if(S.view==='acct')return renderAcct();
     if(S.view==='roles')return renderRoles();
     return S.sel&&S.events[S.sel]?renderEvent(S.events[S.sel]):renderSettleList();
   }
@@ -422,7 +444,7 @@
         (x.k==='docs'&&todo?'<span class="badge">'+todo+'</span>':'')+'</button>';
     }).join('');
     var t=$('#ptitle');
-    if(t)t.textContent={dash:'대시보드',docs:'전자결재',settle:'정산',roles:'역할'}[S.view]||'마블 ERP';
+    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',roles:'역할'}[S.view]||'마블 ERP';
   }
 
   /* ---- 대시보드 ---- */
@@ -887,7 +909,8 @@
     if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
     /* 전자결재 */
-    if(t.id==='newDoc') return newDoc();
+    if(t.id==='newDoc') return newDoc('official');
+    if(t.id==='newExp') return newDoc('expense');
     if(t.id==='dback'){ S.docSel=null; S.confirmDocDel=null; remember(); render(); return; }
     if(t.id==='docDel'){ S.confirmDocDel=S.docSel; render(); return; }
     if(t.id==='docDelNo'){ S.confirmDocDel=null; render(); return; }
@@ -972,10 +995,10 @@
   }
 
   /* ============ 액션 ============ */
-  function newDoc(){
+  function newDoc(kind){
     if(!S.db)return;
     var ref=S.db.collection('docs').doc();
-    ref.set(newDocBody()).then(function(){S.view='docs';S.docSel=ref.id;remember();render();})
+    ref.set(kind==='expense'?newExpenseBody():newDocBody()).then(function(){S.view='docs';S.docSel=ref.id;remember();render();})
       .catch(function(e){errbar('문서 생성 실패 '+(e&&e.code||''));});
   }
   function removeDoc(){
@@ -1346,8 +1369,9 @@
         auth:{
           persistSession:true,      /* 로그인 상태를 이 브라우저에 보관한다 */
           autoRefreshToken:true,    /* 만료 전에 조용히 갱신한다 */
-          detectSessionInUrl:true,  /* 메일 링크로 들어왔을 때 주소에서 토큰을 읽는다 */
-          storageKey:'mb-erp-auth'
+          detectSessionInUrl:true   /* 메일 링크로 들어왔을 때 주소에서 토큰을 읽는다 */
+          /* storageKey 는 건드리지 않는다. 이름을 바꾸면 이미 로그인한 사람의
+             세션을 못 찾아 전원 다시 로그인하게 된다. */
         }
       });
       S.sb=sb;
