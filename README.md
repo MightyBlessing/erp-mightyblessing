@@ -3,7 +3,17 @@
 마이티블레싱 내부 결재·정산 시스템. 단일 HTML 페이지 하나로 돌아간다.
 
 **운영 링크** — https://erp-mightyblessing-i7xj.vercel.app
-저장소는 Supabase. 로그인은 메일 링크 인증이고 `@mightyblessing.com` 주소만 들어온다.
+저장소는 Supabase. 로그인은 회사 Google 계정, 또는 메일 링크.
+어느 쪽이든 `@mightyblessing.com` 주소만 들어온다 (`allowed_emails` 에 넣은 외부 주소는 예외).
+
+Google 로그인을 켜려면 Google Cloud Console 에서 OAuth 클라이언트를 만들고
+승인된 리디렉션 URI 에 `https://<프로젝트>.supabase.co/auth/v1/callback` 을 넣은 뒤,
+Supabase → Authentication → Providers → Google 에 클라이언트 ID·보안 비밀을 넣는다.
+Workspace 라면 동의 화면을 '내부'로 두면 심사가 필요 없고 회사 계정만 쓸 수 있다.
+
+메일 링크는 통수 제한이 있다. Supabase 기본 발송기는 시간당 몇 통이라
+사람이 여럿이면 금방 막힌다. 커스텀 SMTP 를 붙여야 메일 본문도 고칠 수 있고
+(6자리 숫자 `{{ .Token }}` 를 넣으려면 필요하다) 통수도 풀린다.
 
 ## 구성
 

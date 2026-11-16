@@ -91,6 +91,22 @@
   .bar h1{font-size:19px; font-weight:700; margin:0; letter-spacing:-.03em}
   .bar .who{margin-left:auto; display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted)}
   .bar .who img{width:24px; height:24px; border-radius:50%; display:block}
+  /* ---- 로그인 ---- */
+  .gbtn{display:flex; align-items:center; justify-content:center; gap:10px; width:100%;
+    padding:12px 14px; border:1px solid var(--line); border-radius:var(--r-ctl);
+    background:var(--card); color:var(--ink); font-family:inherit; font-size:14.5px;
+    font-weight:600; letter-spacing:-.01em; cursor:pointer; box-shadow:var(--shadow-sm);
+    transition:border-color .12s ease, transform .08s ease}
+  .gbtn:hover{border-color:var(--faint)}
+  .gbtn:active{transform:translateY(1px)}
+  .gbtn:disabled{opacity:.6; cursor:default}
+  .gbtn svg{width:18px; height:18px; flex:0 0 auto}
+  .orline{display:flex; align-items:center; gap:10px; margin:16px 0;
+    color:var(--faint); font-size:11.5px}
+  .orline::before,.orline::after{content:""; flex:1; height:1px; background:var(--line)}
+  .linkbtn{border:0; background:transparent; color:var(--accent-ink); font-family:inherit;
+    font-size:12.5px; font-weight:600; cursor:pointer; padding:0; text-decoration:underline}
+
   /* ---- 증빙 ---- */
   .evgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(124px,1fr)); gap:10px}
   .ev{position:relative; border:1px solid var(--line); border-radius:var(--r-ctl); overflow:hidden;
@@ -2778,6 +2794,48 @@
     return false;
   }
 
+  var GOOGLE_MARK='<svg viewBox="0 0 48 48" aria-hidden="true">'+
+    '<path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.2-.4-4.7H24v8.9h11.8c-.5 2.7-2 5-4.4 6.6v5.5h7.1c4.2-3.8 6.6-9.5 6.6-16.3z"/>'+
+    '<path fill="#34A853" d="M24 46c6 0 11-2 14.6-5.2l-7.1-5.5c-2 1.3-4.5 2.1-7.5 2.1-5.8 0-10.6-3.9-12.4-9.1H4.3v5.7C7.9 41.1 15.4 46 24 46z"/>'+
+    '<path fill="#FBBC05" d="M11.6 28.3c-.5-1.3-.7-2.8-.7-4.3s.3-3 .7-4.3v-5.7H4.3C2.8 17 2 20.4 2 24s.8 7 2.3 10l7.3-5.7z"/>'+
+    '<path fill="#EA4335" d="M24 10.6c3.3 0 6.2 1.1 8.5 3.3l6.3-6.3C35 4.1 30 2 24 2 15.4 2 7.9 6.9 4.3 14l7.3 5.7c1.8-5.2 6.6-9.1 12.4-9.1z"/></svg>';
+
+  /* 구글 계정으로 들어오면 메일을 한 통도 안 보낸다.
+     발송 한도도, 링크가 먼저 열려 써버리는 일도, 엉뚱한 브라우저도 없다.
+     hd 는 계정 고르는 창을 회사 도메인으로 좁혀주는 힌트일 뿐이고,
+     실제 차단은 데이터베이스 쪽 트리거가 한다. */
+  function googleLogin(sb,btn){
+    if(btn){ btn.disabled=true; btn.textContent='구글로 넘어가는 중…'; }
+    sb.auth.signInWithOAuth({
+      provider:'google',
+      skipBrowserRedirect:true,
+      options:{
+        skipBrowserRedirect:true,
+        redirectTo:location.origin+location.pathname,
+        queryParams:{hd:'mightyblessing.com', prompt:'select_account'}
+      }
+    }).then(function(r){
+      if(r&&r.error) throw r.error;
+      var url=r&&r.data&&r.data.url;
+      if(!url) throw new Error('구글 로그인 주소를 만들지 못했습니다');
+      /* 공급자가 꺼져 있으면 슈파베이스가 JSON 오류를 그대로 띄운다.
+         그리로 넘어가 버리면 앱으로 돌아올 길이 없다. 먼저 두드려 보고 간다. */
+      return fetch(url,{redirect:'manual'}).then(function(res){
+        if(res.type==='opaqueredirect'||res.status===0||(res.status>=300&&res.status<400)){
+          location.href=url; return;
+        }
+        return res.json().catch(function(){return {};}).then(function(j){
+          throw new Error(j.msg||j.error_description||j.error||('구글 로그인을 시작하지 못했습니다 ('+res.status+')'));
+        });
+      },function(){
+        /* 두드려 보지 못했으면(네트워크·CORS) 막을 이유는 없다. 그냥 간다. */
+        location.href=url;
+      });
+    }).catch(function(e){
+      renderLogin(sb,loginError(e&&e.message||e),'');
+    });
+  }
+
   function renderLogin(sb,msg,stage){
     app=$('#app')||app; if(!app)return;
     var n=$('#nav'); if(n)n.innerHTML='';
@@ -2798,13 +2856,22 @@
         '<div class="actions"><button class="btn primary" id="otpGo">들어가기</button>'+
           '<button class="btn" id="loginAgain">주소 바꾸기</button></div>'+
         '<p class="hint" style="margin:12px 0 0">메일이 안 보이면 스팸함도 확인해 주세요.</p>';
-    }else{
-      body='<p style="color:var(--muted);font-size:13px;margin:0 0 6px">회사 이메일 주소를 넣으면 로그인 메일을 보내드립니다. 비밀번호는 없습니다.</p>'+
-        '<p class="hint" style="margin:0 0 14px">한 번 들어오면 이 브라우저에서는 로그인 상태가 유지됩니다.</p>'+
+    }else if(stage==='mail'){
+      body='<p style="color:var(--muted);font-size:13px;margin:0 0 6px">이메일 주소를 넣으면 로그인 메일을 보내드립니다. 비밀번호는 없습니다.</p>'+
+        '<p class="hint" style="margin:0 0 14px">회사 Google 계정이 있으시면 위로 돌아가 <b>구글 계정으로 로그인</b>이 더 빠릅니다.</p>'+
         note+
         '<div class="field"><label for="loginEmail">이메일</label>'+
           '<input id="loginEmail" type="email" placeholder="name@mightyblessing.com" autocomplete="email" value="'+esc(mail)+'"></div>'+
-        '<div class="actions"><button class="btn primary" id="loginGo">로그인 메일 받기</button></div>';
+        '<div class="actions"><button class="btn primary" id="loginGo">로그인 메일 받기</button>'+
+          '<button class="btn" id="backToGoogle">뒤로</button></div>';
+    }else{
+      body='<p style="color:var(--muted);font-size:13px;margin:0 0 14px">회사 Google 계정으로 들어옵니다. 비밀번호를 따로 만들 것은 없습니다.</p>'+
+        note+
+        '<button type="button" class="gbtn" id="gGo">'+GOOGLE_MARK+'구글 계정으로 로그인</button>'+
+        '<p class="hint" style="margin:10px 0 0">한 번 들어오면 이 브라우저에서는 로그인 상태가 유지됩니다.</p>'+
+        '<div class="orline">또는</div>'+
+        '<div style="text-align:center"><button type="button" class="linkbtn" id="useMail">이메일로 로그인 링크 받기</button></div>'+
+        '<p class="hint" style="margin:8px 0 0;text-align:center">회사 Google 계정이 없는 외부 인력용입니다.</p>';
     }
     app.innerHTML='<div style="max-width:400px;margin:40px auto"><div class="card">'+
       '<h2 style="margin-bottom:6px">마블 ERP</h2>'+body+'</div></div>';
@@ -2821,23 +2888,28 @@
           cleanUrl(); location.reload();
         });
       });
-      $('#loginAgain').addEventListener('click',function(){ renderLogin(sb,'',''); });
+      $('#loginAgain').addEventListener('click',function(){ renderLogin(sb,'','mail'); });
       ob.focus();
-    }else{
+    }else if(stage==='mail'){
       var go=$('#loginGo'), box=$('#loginEmail');
       box.addEventListener('keydown',function(e){ if(e.key==='Enter') go.click(); });
       go.addEventListener('click',function(){
         var v=(box.value||'').trim();
-        if(!v||v.indexOf('@')<0) return renderLogin(sb,'이메일 주소를 확인해 주세요.','');
+        if(!v||v.indexOf('@')<0) return renderLogin(sb,'이메일 주소를 확인해 주세요.','mail');
         go.disabled=true; go.textContent='보내는 중…';
         S.loginMail=v; keepMail(v);
         sb.auth.signInWithOtp({email:v,options:{emailRedirectTo:location.origin+location.pathname}})
           .then(function(r){
-            if(r.error) return renderLogin(sb,loginError(r.error.message),'');
+            if(r.error) return renderLogin(sb,loginError(r.error.message),'mail');
             renderLogin(sb,'','sent');
           });
       });
+      $('#backToGoogle').addEventListener('click',function(){ renderLogin(sb,'',''); });
       if(!mail) box.focus();
+    }else{
+      var gb=$('#gGo');
+      gb.addEventListener('click',function(){ googleLogin(sb,gb); });
+      $('#useMail').addEventListener('click',function(){ renderLogin(sb,'','mail'); });
     }
   }
 
@@ -2845,6 +2917,10 @@
      허용되지 않은 도메인은 DB 트리거가 막기 때문에 "Database error" 로 올라온다. */
   function loginError(m){
     m=String(m||'');
+    if(/provider is not enabled|Unsupported provider/i.test(m))
+      return '구글 로그인이 아직 켜져 있지 않습니다. 관리자가 Supabase에서 Google 공급자를 켜야 합니다.\n그때까지는 아래 이메일로 들어와 주세요.';
+    if(/popup|blocked/i.test(m))
+      return '창이 막혔습니다. 브라우저의 팝업 차단을 풀고 다시 눌러주세요.';
     if(/Database error|Signups not allowed|not allowed|허용/i.test(m))
       return '이 주소로는 들어올 수 없습니다. 회사 메일(@mightyblessing.com)을 쓰시거나, 외부 주소라면 관리자에게 등록을 요청해 주세요.';
     if(/rate limit|too many/i.test(m))
