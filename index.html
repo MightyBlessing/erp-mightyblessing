@@ -224,11 +224,23 @@
   .sealbox{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
   .sealbox img{width:74px; height:74px; object-fit:contain; border:1px solid var(--line); border-radius:6px; background:#fff; padding:4px}
   .sealbox img.wide{width:190px; height:56px}
-  .rail .logo img{display:block; width:134px; height:auto; background:#fff;
-    padding:7px 9px; border-radius:8px; margin-bottom:6px}
+  /* 레일이 어두워서 로고의 검은 글자가 묻힌다. 흰 판을 깔면 그 판이 눈에
+     띄어 지저분하다. 로고를 통째로 흰색으로 빼서 얹는다. */
+  .rail .logo img{display:block; width:128px; height:auto; margin-bottom:5px;
+    filter:brightness(0) invert(1); opacity:.95}
+  .rail .logo{cursor:pointer; -webkit-user-select:none; user-select:none}
+  .rail .logo:hover img{opacity:1}
+  .rail .logo:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:6px}
 
-  /* ---- 인쇄 / PDF 저장 ---- */
+  /* ---- PDF / 인쇄 ---- */
   #printroot{display:none}
+  /* PDF 로 뜰 때는 화면 밖에 A4 비율로 펼쳐 놓고 그대로 찍는다.
+     어두운 화면에서도 종이는 흰색이어야 한다. */
+  #printroot.cap{display:block; position:fixed; left:-10000px; top:0;
+    width:780px; background:#fff; z-index:-1}
+  #printroot.cap .doc{border:0; border-radius:0; background:#fff; color:#15171a;
+    padding:26px 28px; font-size:13.5px}
+  #printroot.cap .doc .sealimg{mix-blend-mode:normal}
   @media print{
     @page{size:A4; margin:18mm 16mm}
     html,body{background:#fff !important}
@@ -521,6 +533,10 @@
     }).join('');
     var lg=$('.rail .logo');
     if(lg){
+      lg.setAttribute('role','button');
+      lg.setAttribute('tabindex','0');
+      lg.setAttribute('title','대시보드로');
+      lg.setAttribute('data-home','1');
       var want='<img src="'+esc(S.logo||LOGO_FALLBACK)+'" alt="마이티블레싱" '+
         'onerror="this.parentNode.innerHTML=\'마블 ERP<small>MIGHTY BLESSING</small>\'"><small>ERP</small>';
       if(lg.innerHTML!==want) lg.innerHTML=want;
@@ -687,7 +703,10 @@
               acts.push('<button class="btn danger" data-dact="reject">반려</button>'); }
     if(writable()&&st!=='draft'&&d.drafter===S.me.id&&st!=='approved') acts.push('<button class="btn" data-dact="cancel">취소</button>');
     if(writable()&&(st==='rejected'||st==='canceled')&&d.drafter===S.me.id) acts.push('<button class="btn" data-dact="reopen">다시 작성</button>');
-    if(st==='approved') acts.push('<button class="btn primary" data-dact="pdf">PDF로 내보내기</button>');
+    if(st==='approved'){
+      acts.push('<button class="btn primary" data-dact="pdf">PDF 내려받기</button>');
+      acts.push('<button class="btn" data-dact="print">인쇄</button>');
+    }
 
     var payBlock;
     if(st!=='approved'){
@@ -756,6 +775,7 @@
         '<section class="card"><h2>미리보기</h2>'+expensePreview(d)+'</section>'+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
+          (st==='approved'?'<p class="hint" style="margin:10px 0 0">PDF는 파일로 바로 내려받습니다.</p>':'')+
         '</section>'+
         '<section class="card"><h2>지급</h2>'+payBlock+'</section>'+
       '</div></div>';
@@ -825,11 +845,14 @@
               acts.push('<button class="btn danger" data-dact="reject">반려</button>'); }
     if(writable()&&st!=='draft'&&d.drafter===S.me.id&&st!=='approved') acts.push('<button class="btn" data-dact="cancel">취소</button>');
     if(writable()&&(st==='rejected'||st==='canceled')&&d.drafter===S.me.id) acts.push('<button class="btn" data-dact="reopen">다시 작성</button>');
-    if(st==='approved') acts.push('<button class="btn primary" data-dact="pdf">PDF로 내보내기</button>');
+    if(st==='approved'){
+      acts.push('<button class="btn primary" data-dact="pdf">PDF 내려받기</button>');
+      acts.push('<button class="btn" data-dact="print">인쇄</button>');
+    }
     acts.push('<button class="btn" id="docCopy">본문 복사</button>');
     var printHint = st==='approved'
-      ? '<p class="hint" style="margin:10px 0 0">인쇄창에서 <b>&lsquo;머리글 및 바닥글&rsquo;</b> 체크를 풀어야 날짜와 주소가 안 찍힙니다. '+
-        '여백은 <b>&lsquo;기본값&rsquo;</b>, 배경 그래픽은 <b>켜</b>두세요.</p>' : '';
+      ? '<p class="hint" style="margin:10px 0 0">PDF는 파일로 바로 내려받습니다. 인쇄창을 거치지 않으니 날짜·주소가 찍히지 않습니다.<br>'+
+        '종이로 뽑을 때만 <b>인쇄</b>를 쓰고, 그 창에서 <b>&lsquo;머리글 및 바닥글&rsquo;</b> 체크를 풀어주세요.</p>' : '';
 
     var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
       ? (S.confirmDocDel===d.id
@@ -915,14 +938,69 @@
     return '<span class="seal">직인<br>미등록</span>';
   }
 
+  var PDF_LIB=['https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js',
+               'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'];
+
+  function docFileName(d){
+    var nm=[(d.no||'').replace(/[\\/:*?"<>|]/g,'-'), (d.subject||d.title||'문서')].filter(Boolean).join(' ');
+    return nm.replace(/\s+/g,' ').trim();
+  }
+  function previewHTML(d){ return d.type==='expense'?expensePreview(d):docPreview(d); }
+
+  /* 인쇄창을 거치면 브라우저가 날짜·쪽번호·웹주소를 종이에 같이 찍는다.
+     그건 CSS로 못 막고 사람마다 설정이 달라진다. 그래서 화면을 직접 찍어
+     A4 PDF 파일로 만든다. 설정을 건드릴 일이 없고 파일 이름도 정해진다. */
+  function savePdf(d,btn){
+    var root=document.getElementById('printroot'); if(!root)return;
+    var label=btn?btn.textContent:'';
+    if(btn){ btn.disabled=true; btn.textContent='만드는 중…'; }
+    var done=function(){
+      root.className=''; root.innerHTML='';
+      if(btn){ btn.disabled=false; btn.textContent=label; }
+    };
+    root.innerHTML=previewHTML(d);
+    root.className='cap';
+    loadScript(PDF_LIB[0])
+      .then(function(){ return loadScript(PDF_LIB[1]); })
+      .then(function(){
+        return window.html2canvas(root,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false});
+      })
+      .then(function(cv){
+        var JS=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
+        if(!JS) throw new Error('jsPDF 없음');
+        var pdf=new JS({unit:'mm',format:'a4',orientation:'p'});
+        var PW=210, PH=297, M=16;
+        var iw=PW-M*2, ih=cv.height*iw/cv.width;
+        var img=cv.toDataURL('image/jpeg',0.94);
+        var pageH=PH-M*2;
+        var pages=Math.max(1,Math.ceil((ih-0.5)/pageH));
+        for(var i=0;i<pages;i++){
+          if(i) pdf.addPage();
+          pdf.addImage(img,'JPEG',M,M-i*pageH,iw,ih);
+          /* 다음 장으로 넘어간 부분이 여백에 비친다. 흰색으로 덮는다. */
+          pdf.setFillColor(255,255,255);
+          pdf.rect(0,0,PW,M,'F');
+          pdf.rect(0,PH-M,PW,M,'F');
+          pdf.rect(0,0,M,PH,'F');
+          pdf.rect(PW-M,0,M,PH,'F');
+        }
+        pdf.save(docFileName(d)+'.pdf');
+        flash('PDF를 내려받았습니다');
+        done();
+      })
+      .catch(function(e){
+        errbar('PDF를 만들지 못했습니다 ('+(e&&e.message||e)+'). 대신 인쇄로 저장해 보세요.');
+        done();
+      });
+  }
+
   /* 브라우저 인쇄창을 열어 PDF로 저장하게 한다. 화면의 다른 요소는 숨기고
      공문 한 장만 A4에 올린다. 제목을 바꿔 두면 저장될 파일 이름이 된다. */
   function printDoc(d){
     var root=document.getElementById('printroot'); if(!root)return;
-    root.innerHTML=docPreview(d);
+    root.innerHTML=previewHTML(d);
     var oldTitle=document.title;
-    var nm=[(d.no||'').replace(/[\\/:*?"<>|]/g,'-'),(d.subject||d.title||'공문')].filter(Boolean).join(' ');
-    document.title=nm;
+    document.title=docFileName(d);
     document.body.classList.add('printing');
     var done=function(){
       document.body.classList.remove('printing');
@@ -1391,6 +1469,7 @@
   document.addEventListener('click',function(e){
    try{
     var t=e.target,el; if(!t||!t.closest)return;
+    if(t.closest('[data-home]')){ goHome(); return; }
     if((el=t.closest('[data-nav]'))){ S.view=el.dataset.nav; S.sel=null; S.docSel=null; S.confirmDel=null; S.confirmDocDel=null; remember(); render(); return; }
     if((el=t.closest('[data-go]'))){
       var g=el.dataset.go;
@@ -1404,7 +1483,8 @@
     if(t.id==='sealDel') return saveSeal(null);
     if(t.id==='logoDel') return saveLogo(null);
     if(t.id==='avaDel')  return clearAvatar();
-    if(t.id==='nform'&&S.newPanel){ S.newPanel.form=t.value; render(); return; }
+    /* 서식 선택은 change 에서만 받는다. 클릭에서 다시 그리면 드롭다운이
+       열리자마자 닫힌다. */
     if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
     /* 전자결재 */
@@ -1434,7 +1514,8 @@
       if(t.id==='payNo'){ S.confirmPay=null; render(); return; }
       if(t.id==='payYes') return payExpense(dc);
       if((el=t.closest('[data-dact]'))){
-        if(el.dataset.dact==='pdf') return printDoc(dc);
+        if(el.dataset.dact==='pdf')   return savePdf(dc,el);
+        if(el.dataset.dact==='print') return printDoc(dc);
         return docAct(dc, el.dataset.dact);
       }
     }
@@ -1491,6 +1572,11 @@
     var fmap={evName:'name',evDate:'date',evPlace:'place',net:'net',rev:'rev',opex:'opex',tax:'tax',rate:'rate',ratio:'ratio',cap:'cap',unit:'unit'};
     if(fmap[t.id]){ ev[fmap[t.id]]=t.value; touch('ev',ev.id); softNumbers(ev); }
    }catch(err){ errbar('입력 처리 중 '+(err&&err.message||err)); }
+  });
+  document.addEventListener('keydown',function(e){
+    if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.closest&&e.target.closest('[data-home]')){
+      e.preventDefault(); goHome();
+    }
   });
   document.addEventListener('change',function(e){
     var t=e.target;
@@ -1626,6 +1712,15 @@
       document.body.appendChild(ta);ta.select();
       try{document.execCommand('copy');flash(ok);}catch(e){flash('복사하지 못했습니다');}ta.remove();}
   }
+  /* 로고를 누르면 보던 문서를 덮고 대시보드로 돌아간다. */
+  function goHome(){
+    flush();
+    S.view='dash'; S.sel=null; S.docSel=null;
+    S.confirmDel=null; S.confirmDocDel=null; S.confirmPay=null; S.newPanel=null;
+    remember(); render();
+    try{ window.scrollTo(0,0); }catch(e){}
+  }
+
   function remember(){try{localStorage.setItem('mb-erp-nav',JSON.stringify({v:S.view,s:S.sel,d:S.docSel}));}catch(e){}}
 
   var resolving=false;
