@@ -266,6 +266,34 @@
   var DOC_STATUS={draft:'작성중',submitted:'결재대기',progress:'승인진행중',approved:'승인완료',rejected:'반려',canceled:'취소'};
   var NAV=[{k:'dash',t:'대시보드',i:'▦'},{k:'docs',t:'전자결재',i:'✎'},{k:'acct',t:'회계',i:'▤'},{k:'settle',t:'정산',i:'₩'},{k:'roles',t:'역할',i:'⚙'}];
   var DOC_KIND={official:'공문',expense:'지출결의서'};
+  var SCOPE={out:'대외용',in:'대내용'};
+  /* 로고는 저장소에 같이 둔다. 공용 자산이라 사람마다 올릴 이유가 없다.
+     역할 화면에서 올리면 그쪽이 우선한다. */
+  var LOGO_FALLBACK='logo.png';
+  /* 공문 서식. 누르자마자 장소 대관으로 정해지면 다른 공문을 쓸 때 전부
+     지우고 다시 써야 한다. 고르게 둔다. */
+  var FORMS={
+    rent:{
+      t:'장소 대관 요청의 건',
+      p:['귀 교회와 당회 위에 하나님의 은혜와 평강이 충만하시기를 기원합니다.',
+         '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
+         '이에 아래와 같이 행사를 개최하고자 하오니, 귀 교회의 귀한 공간을 사용할 수 있도록 허락하여 주시기를 정중히 요청드립니다.'],
+      k:['행사명','행사목적','일시','주관','주최/협력','세부장소','참석인원','기타(요청)사항']},
+    propose:{
+      t:'행사 제안의 건',
+      p:['귀 기관의 무궁한 발전을 기원합니다.',
+         '저희 마이티블레싱은 예배 기획·운영과 공연 제작을 맡아온 단체입니다.',
+         '이에 아래와 같이 행사를 제안드리오니, 검토하여 주시기를 정중히 요청드립니다.'],
+      k:['행사명','제안 배경','일시(안)','장소','주관','참여 규모','제안 내용','소요 예산']},
+    notice:{
+      t:'행사 협조 요청의 건',
+      p:['귀 기관의 무궁한 발전을 기원합니다.',
+         '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
+         '이에 원활한 진행을 위하여 아래와 같이 협조를 요청드리오니, 살펴주시기를 바랍니다.'],
+      k:['행사명','행사목적','일시','장소','주관','협조 요청 사항','담당자','기타사항']},
+    blank:{ t:'', p:[''], k:[] }
+  };
+  var FORM_LABEL={rent:'장소 대관 요청',propose:'행사 제안',notice:'행사 협조 요청',blank:'기타 (직접 작성)'};
   /* 계정과목 — 장부 분류. 세무·결산에서 이 단위로 묶인다. */
   var ACCOUNTS=['사례비','인건비','임차료','장비·대여','재료비','인쇄·홍보','교통비','식비','수수료','기타'];
   var METHODS={bank:'계좌이체',card:'법인카드',cash:'현금'};
@@ -275,7 +303,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -406,8 +434,9 @@
       var m=re.exec(String(d.no||''));
       if(m){ var n=parseInt(m[1],10); if(n>mx) mx=n; }
     });
-    /* 종이로 나간 공문이 이미 14호까지 있다. 앱에 기록이 없어도 15호부터. */
-    if(!mx && kind!=='expense' && y<=2026) mx=14;
+    /* 종이로 나간 공문이 이미 14호까지 있다. 앱에 적힌 번호가 그보다
+       작더라도 15호부터 이어가야 한다. */
+    if(kind!=='expense' && y<=2026 && mx<14) mx=14;
     return pre+'-'+pad3(mx+1)+'호';
   }
 
@@ -427,15 +456,15 @@
       pay:{state:'pending',at:'',by:'',memo:''},
       steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
   }
-  function newDocBody(){
-    var y=new Date().getFullYear();
-    return {type:'official', title:'장소 대관 요청의 건', no:nextNo('official'), date:today(),
-      to:'', cc:'', subject:'',
-      paras:['귀 교회와 당회 위에 하나님의 은혜와 평강이 충만하시기를 기원합니다.',
-             '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
-             '이에 아래와 같이 행사를 개최하고자 하오니, 귀 교회의 귀한 공간을 사용할 수 있도록 허락하여 주시기를 정중히 요청드립니다.'],
-      ov:OV_KEYS.map(function(k){return {k:k,v:''};}),
-      signer:'마이티블레싱대표', seal:true,
+  function newDocBody(form,scope){
+    var f=FORMS[form]||FORMS.rent;
+    scope=scope==='in'?'in':'out';
+    return {type:'official', form:form||'rent', scope:scope,
+      title:f.t||'(제목을 입력하세요)', no:nextNo('official'), date:today(),
+      to:'', cc:'', subject:f.t||'',
+      paras:f.p.slice(),
+      ov:f.k.map(function(k){return {k:k,v:''};}),
+      signer:'마이티블레싱대표', seal:scope!=='in',
       /* 연락처는 비워 둔다 — 저장소가 공개라 코드에 번호를 박지 않는다.
          한 번 입력하면 그 문서에 저장되고, 복사해서 새 문서를 만들면 따라온다. */
       addr:'', tel1:'', tel2:'', email:'contact@mightyblessing.com',
@@ -483,9 +512,8 @@
     }).join('');
     var lg=$('.rail .logo');
     if(lg){
-      var want=S.logo
-        ? '<img src="'+esc(S.logo)+'" alt="마이티블레싱"><small>ERP</small>'
-        : '마블 ERP<small>MIGHTY BLESSING</small>';
+      var want='<img src="'+esc(S.logo||LOGO_FALLBACK)+'" alt="마이티블레싱" '+
+        'onerror="this.parentNode.innerHTML=\'마블 ERP<small>MIGHTY BLESSING</small>\'"><small>ERP</small>';
       if(lg.innerHTML!==want) lg.innerHTML=want;
     }
     var t=$('#ptitle');
@@ -569,8 +597,9 @@
     var list=docList(S.docTab);
     app.innerHTML=
       '<div class="actions" style="margin-bottom:14px">'+
-        '<button class="btn primary" id="newDoc"'+(writable()?'':' disabled')+'>+ 공문 작성</button>'+
+        '<button class="btn primary" id="newDocOpen"'+(writable()?'':' disabled')+'>+ 공문 작성</button>'+
         '<button class="btn primary" id="newExp"'+(writable()?'':' disabled')+'>+ 지출결의서</button></div>'+
+      (S.newPanel?newDocPanel():'')+
       '<div class="tabs">'+tabs.map(function(t){
         var n=docList(t[0]).length;
         return '<button type="button" data-dtab="'+t[0]+'" aria-pressed="'+(S.docTab===t[0]?'true':'false')+'">'+t[1]+'<span class="n">'+n+'</span></button>';
@@ -580,7 +609,8 @@
         list.map(function(d){
           var st=docStatus(d), isX=d.type==='expense';
           return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
-            '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+(DOC_KIND[d.type]||'공문')+'</td>'+
+            '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+(DOC_KIND[d.type]||'공문')+
+              (isX?'':'<div style="font-size:11px;opacity:.75">'+SCOPE[d.scope||'out']+'</div>')+'</td>'+
             '<td><b>'+esc(d.title||'(제목 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(isX?(d.payee||''):(d.subject||''))+'</div></td>'+
             '<td style="color:var(--muted);font-size:12px">'+esc(d.no||'')+'</td>'+
             '<td'+(isX?' class="num"':'')+'>'+(isX?won(expTotal(d)):esc(d.to||'—'))+'</td>'+
@@ -589,6 +619,32 @@
             '<td class="num" style="color:var(--muted)">'+esc(shortTime(d.updatedAt))+'</td></tr>';
         }).join('')+'</tbody></table></div>'
         :'<div class="empty"><strong>문서가 없습니다</strong>위 버튼으로 새 문서를 시작하세요.</div>')+'</div>';
+  }
+
+  function newDocPanel(){
+    var n=S.newPanel;
+    return '<section class="card" style="margin-bottom:14px"><h2>어떤 공문인가요</h2>'+
+      '<div class="field"><label>받는 곳</label>'+
+        '<div class="tabs" style="margin:0">'+
+          ['out','in'].map(function(k){
+            return '<button type="button" data-nscope="'+k+'" aria-pressed="'+(n.scope===k?'true':'false')+'">'+SCOPE[k]+'</button>';
+          }).join('')+'</div>'+
+        '<p class="hint" style="margin:6px 0 0">'+(n.scope==='out'
+          ? '다른 기관으로 나갑니다. 직인과 시행 정보(주소·전화·메일)가 들어갑니다.'
+          : '내부에서 돕니다. 직인과 시행 정보 없이 나갑니다.')+'</p>'+
+      '</div>'+
+      '<div class="field" style="margin-top:14px"><label for="nform">서식</label>'+
+        '<select id="nform">'+Object.keys(FORMS).map(function(k){
+          return '<option value="'+k+'"'+(n.form===k?' selected':'')+'>'+FORM_LABEL[k]+'</option>';
+        }).join('')+'</select>'+
+        '<p class="hint" style="margin:6px 0 0">'+(n.form==='blank'
+          ? '제목과 본문을 직접 씁니다. 행사 개요 표는 없습니다.'
+          : '본문과 행사 개요 표가 미리 채워집니다. 그대로 고쳐 쓰시면 됩니다.')+'</p>'+
+      '</div>'+
+      '<div class="actions" style="margin-top:16px">'+
+        '<button class="btn primary" id="newDocGo">만들기</button>'+
+        '<button class="btn" id="newDocNo">취소</button></div>'+
+    '</section>';
   }
 
   /* ---- 지출결의서 ---- */
@@ -774,6 +830,7 @@
     app.innerHTML=
       '<div class="actions" style="margin-bottom:14px"><button class="btn sm" id="dback">← 문서함</button>'+
         '<span class="pill p-'+st+'" style="align-self:center">'+DOC_STATUS[st]+'</span>'+
+        '<span class="pill p-pending" style="align-self:center">'+SCOPE[d.scope||'out']+'</span>'+
         '<span style="flex:1"></span>'+delCtl+'</div>'+
       (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
       (!editable&&st==='draft'?'<div class="note n-info" style="margin:0 0 14px">작성자만 수정할 수 있습니다.</div>':'')+
@@ -783,6 +840,9 @@
           '<div class="row2">'+fld('text','dNo','문서번호',d.no,dis)+fld('text','dDate','시행일자',d.date,dis)+'</div>'+
           fld('text','dTo','수신',d.to,dis)+
           '<div class="row2">'+fld('text','dCc','참조',d.cc,dis)+fld('text','dSigner','발신명의',d.signer,dis)+'</div>'+
+          '<div class="field"><label for="dScope">받는 곳</label><select id="dScope"'+dis+'>'+
+            ['out','in'].map(function(k){return '<option value="'+k+'"'+((d.scope||'out')===k?' selected':'')+'>'+SCOPE[k]+'</option>';}).join('')+
+          '</select></div>'+
           fld('text','dSubject','제목',d.subject,dis)+
         '</section>'+
         '<section class="card"><h2>결재선</h2>'+
@@ -830,11 +890,13 @@
       }).join('')+'</table>':'')+
       '<div class="end">끝.</div>'+
       '<div class="sign"><span class="nm">'+esc(d.signer||'')+(d.seal!==false?sealMark(d):'')+'</span></div>'+
-      '<hr class="thin">'+
-      '<div class="issue"><b>시행</b><span>'+esc(d.no||'')+' ('+esc(d.date||'')+')</span>'+
-        '<b>우</b><span>'+esc(d.addr||'')+'</span>'+
-        '<b>전화</b><span>'+esc(d.tel1||'')+(d.tel2?' · '+esc(d.tel2):'')+'</span>'+
-        '<b>메일</b><span>'+esc(d.email||'')+'</span></div>'+
+      ((d.scope||'out')==='in'
+        ? '<hr class="thin"><div class="issue"><b>시행</b><span>'+esc(d.no||'')+' ('+esc(d.date||'')+')</span></div>'
+        : '<hr class="thin">'+
+          '<div class="issue"><b>시행</b><span>'+esc(d.no||'')+' ('+esc(d.date||'')+')</span>'+
+            '<b>우</b><span>'+esc(d.addr||'')+'</span>'+
+            '<b>전화</b><span>'+esc(d.tel1||'')+(d.tel2?' · '+esc(d.tel2):'')+'</span>'+
+            '<b>메일</b><span>'+esc(d.email||'')+'</span></div>')+
     '</div>';
   }
   /* 직인은 최종 승인된 문서에만 찍힌다. 그 전에는 자리만 표시한다. */
@@ -865,7 +927,7 @@
   /* 원본 공문의 머리: 왼쪽에 로고, 가운데에 큰 기관명. */
   function docHead(title){
     return '<div class="dhead">'+
-      (S.logo?'<img class="lg" src="'+esc(S.logo)+'" alt="마이티블레싱">':'')+
+      '<img class="lg" src="'+esc(S.logo||LOGO_FALLBACK)+'" alt="마이티블레싱" onerror="this.style.display=\'none\'">'+
       '<span class="org">'+esc(title)+'</span></div>';
   }
 
@@ -1333,10 +1395,14 @@
     if(t.id==='sealDel') return saveSeal(null);
     if(t.id==='logoDel') return saveLogo(null);
     if(t.id==='avaDel')  return clearAvatar();
+    if(t.id==='nform'&&S.newPanel){ S.newPanel.form=t.value; render(); return; }
     if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
     /* 전자결재 */
-    if(t.id==='newDoc') return newDoc('official');
+    if(t.id==='newDocOpen'){ S.newPanel={scope:'out',form:'rent'}; render(); return; }
+    if(t.id==='newDocNo'){ S.newPanel=null; render(); return; }
+    if(t.id==='newDocGo') return newDoc('official',S.newPanel);
+    if((el=t.closest('[data-nscope]'))&&S.newPanel){ S.newPanel.scope=el.dataset.nscope; render(); return; }
     if(t.id==='newExp') return newDoc('expense');
     if(t.id==='dback'){ S.docSel=null; S.confirmDocDel=null; remember(); render(); return; }
     if(t.id==='docDel'){ S.confirmDocDel=S.docSel; render(); return; }
@@ -1420,12 +1486,16 @@
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='sealFile') return onSealFile(t.files&&t.files[0]);
+    if(t.id==='nform'&&S.newPanel){ S.newPanel.form=t.value; render(); return; }
     if(t.id==='logoFile') return onLogoFile(t.files&&t.files[0]);
     if(t.id==='avaFile')  return onAvatarFile(t.files&&t.files[0]);
     var xd=S.docSel&&S.docs[S.docSel];
     if(xd&&xd.type==='expense'){
       var sm={xEvent:'eventId',xAccount:'account',xMethod:'method'};
       if(sm[t.id]){ xd[sm[t.id]]=t.value; touch('doc',xd.id); render(); return; }
+    }
+    if(xd&&xd.type!=='expense'&&t.id==='dScope'){
+      xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); render(); return;
     }
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
@@ -1453,10 +1523,10 @@
   }
 
   /* ============ 액션 ============ */
-  function newDoc(kind){
+  function newDoc(kind,opt){
     if(!S.db)return;
     var ref=S.db.collection('docs').doc();
-    ref.set(kind==='expense'?newExpenseBody():newDocBody()).then(function(){S.view='docs';S.docSel=ref.id;remember();render();})
+    ref.set(kind==='expense'?newExpenseBody():newDocBody(opt&&opt.form,opt&&opt.scope)).then(function(){S.view='docs';S.docSel=ref.id;S.newPanel=null;remember();render();})
       .catch(function(e){errbar('문서 생성 실패 '+(e&&e.code||''));});
   }
   function removeDoc(){
