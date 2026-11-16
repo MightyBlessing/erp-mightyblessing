@@ -100,6 +100,63 @@
   .bar h1{font-size:19px; font-weight:700; margin:0; letter-spacing:-.03em}
   .bar .who{margin-left:auto; display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted)}
   .bar .who img{width:24px; height:24px; border-radius:50%; display:block}
+  /* ---- 증빙 ---- */
+  .evgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(124px,1fr)); gap:10px}
+  .ev{position:relative; border:1px solid var(--line); border-radius:var(--r-ctl); overflow:hidden;
+    background:var(--paper); display:flex; flex-direction:column}
+  .ev .shot{display:block; width:100%; height:92px; border:0; padding:0; cursor:pointer;
+    background:var(--paper) center/cover no-repeat; color:var(--faint)}
+  .ev .shot.file{display:grid; place-items:center; font-size:11px; font-weight:700; letter-spacing:.04em}
+  .ev .shot.file svg{width:22px; height:22px; margin-bottom:3px}
+  .ev .cap{padding:7px 8px; font-size:11px; line-height:1.4; color:var(--muted); border-top:1px solid var(--line)}
+  .ev .cap b{display:block; color:var(--ink); font-weight:600; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap}
+  .ev .x{position:absolute; top:5px; right:5px; width:22px; height:22px; border-radius:7px;
+    border:0; background:rgba(18,18,26,.62); color:#fff; font-size:14px; line-height:22px;
+    cursor:pointer; padding:0}
+  .ev .x:hover{background:var(--bad)}
+  .ev.sure{outline:2px solid var(--bad); outline-offset:-2px}
+  .drop{border:1.5px dashed var(--line); border-radius:var(--r-ctl); padding:18px 12px; text-align:center;
+    color:var(--muted); font-size:12.5px; cursor:pointer; transition:border-color .12s, background .12s}
+  .drop:hover,.drop.over{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-ink)}
+
+  /* ---- 알림 ---- */
+  .bar .bellwrap{margin-left:auto; display:flex}
+  .bar .who{margin-left:0}
+  .bell{border:1px solid var(--line); background:var(--card); color:var(--muted);
+    width:34px; height:34px; border-radius:var(--r-ctl); display:grid; place-items:center;
+    cursor:pointer; position:relative; padding:0; box-shadow:var(--shadow-sm)}
+  .bell:hover{color:var(--ink); border-color:var(--faint)}
+  .bell[aria-expanded=true]{color:var(--accent-ink); border-color:var(--accent); background:var(--accent-soft)}
+  .bell svg{width:17px; height:17px; display:block}
+  .bell .dot{position:absolute; top:-5px; right:-5px; min-width:17px; height:17px; padding:0 4px;
+    background:var(--bad); color:#fff; border-radius:999px; font-size:10.5px; font-weight:700;
+    line-height:17px; font-family:var(--font-num); border:2px solid var(--paper)}
+  .bellpanel{position:fixed; top:58px; right:max(16px, env(safe-area-inset-right,0px));
+    width:min(330px, calc(100vw - 32px));
+    max-height:min(62vh, 460px); overflow:auto; z-index:60;
+    background:var(--card); border:1px solid var(--line); border-radius:var(--r-card); box-shadow:var(--shadow)}
+  /* 좁은 화면에서는 종 아래에 매달지 않는다. 상단 바가 같이 흘러가 버려서
+     패널이 화면 밖으로 나간다. 가운데 띄워서 항상 보이게 한다. */
+  @media (max-width:700px){
+    .bellpanel{left:14px; right:14px; top:50%; width:auto;
+      transform:translateY(-50%); max-height:72vh}
+  }
+  .bellpanel h3{margin:0; padding:13px 15px 10px; font-size:12.5px; font-weight:700;
+    border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px}
+  .bellpanel h3 button{margin-left:auto; border:0; background:transparent; color:var(--accent-ink);
+    font-family:inherit; font-size:11.5px; font-weight:600; cursor:pointer; padding:0}
+  .nrow{display:flex; gap:9px; padding:11px 15px; border-bottom:1px solid var(--line);
+    width:100%; border-left:0; border-right:0; border-top:0; background:transparent;
+    font-family:inherit; text-align:left; color:var(--ink); cursor:pointer; align-items:flex-start}
+  .nrow:last-child{border-bottom:0}
+  .nrow:hover{background:var(--paper)}
+  .nrow .mark{width:7px; height:7px; border-radius:50%; flex:0 0 auto; margin-top:7px; background:transparent}
+  .nrow.unread .mark{background:var(--accent)}
+  .nrow .tx{flex:1; min-width:0; font-size:12.8px; line-height:1.5}
+  .nrow .tm{display:block; color:var(--faint); font-size:11px; margin-top:2px; font-family:var(--font-num)}
+  .bellpanel .empty{padding:26px 15px}
+
   .page{padding:20px; padding-left:max(20px, env(safe-area-inset-left,0px));
     padding-right:max(20px, env(safe-area-inset-right,0px)); padding-bottom:64px}
 
@@ -313,10 +370,13 @@
     <div class="foot">정산 · 전자결재 · 회계<br>마이티블레싱</div>
   </aside>
   <div class="main">
-    <div class="bar"><h1 id="ptitle">마블 ERP</h1><span class="who" id="who"></span></div>
+    <div class="bar"><h1 id="ptitle">마블 ERP</h1>
+      <span class="bellwrap"><button type="button" class="bell" id="bellBtn" aria-label="알림" aria-expanded="false" hidden></button></span>
+      <span class="who" id="who"></span></div>
     <div class="page" id="app"><div class="card"><div class="empty"><strong>불러오는 중</strong>잠시만 기다려 주세요.</div></div></div>
   </div>
 </div>
+<div class="bellpanel" id="bellPanel" hidden></div>
 
 <script>
 (function(){
@@ -334,6 +394,8 @@
     docs:  ic('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>'),
     acct:  ic('<rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 14.5h4"/>'),
     settle:ic('<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l3.5 5 3.5-5"/><path d="M8.6 12.6h6.8M8.6 15h6.8"/>'),
+    bell:  ic('<path d="M18 8.5a6 6 0 1 0-12 0c0 6-2.2 7.5-2.2 7.5h16.4S18 14.5 18 8.5"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/>'),
+    clip:  ic('<path d="M20.4 11.1 11.2 20.3a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.4-2.4l8.5-8.5"/>'),
     roles: ic('<circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.2a5.8 5.8 0 0 1 11.2 0"/><path d="M16.5 6.4a3 3 0 0 1 0 5.9"/><path d="M18 19.2a5.3 5.3 0 0 0-1.7-3.9"/>')
   };
   var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계'},{k:'settle',t:'정산'},{k:'roles',t:'역할'}];
@@ -375,7 +437,8 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
+    notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -411,6 +474,288 @@
     if(S.avatars[uid]) return S.avatars[uid];
     var p=S.profiles[uid];
     return (p&&p.avatarUrl)||AV;
+  }
+
+  /* ============ 증빙 ============ */
+  var EV_BUCKET='evidence';
+  var EV_MAX=12;            /* 문서 한 장당 */
+  var EV_SIZE=14;           /* MB */
+
+  /* 파일 자체는 문서(JSON) 밖에 둔다. 문서에는 경로와 손톱만 한 미리보기만 남긴다.
+     JSON 안에 사진을 넣으면 문서함을 열 때마다 전부 따라 내려와 느려진다. */
+  function fileBackend(){
+    if(S.sb) return {
+      put:function(docId,name,type,blob){
+        var ext=(String(name).split('.').pop()||'bin').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,5)||'bin';
+        var path=docId+'/'+Date.now().toString(36)+Math.random().toString(36).slice(2,8)+'.'+ext;
+        return S.sb.storage.from(EV_BUCKET).upload(path,blob,{contentType:type,upsert:false})
+          .then(function(r){
+            if(r.error) throw r.error;
+            return {p:path,n:name,t:type,s:blob.size,by:S.me.id||'',at:nowISO()};
+          });
+      },
+      url:function(m){
+        return S.sb.storage.from(EV_BUCKET).createSignedUrl(m.p,600)
+          .then(function(r){ if(r.error) throw r.error; return r.data.signedUrl; });
+      },
+      del:function(m){ return S.sb.storage.from(EV_BUCKET).remove([m.p]); }
+    };
+    /* 체험 모드에는 보관함이 없다. 브라우저 안에만 담아 둔다. */
+    return {
+      put:function(docId,name,type,blob){
+        return new Promise(function(res,rej){
+          var fr=new FileReader();
+          fr.onerror=function(){rej(new Error('파일을 읽지 못했습니다'));};
+          fr.onload=function(){ res({n:name,t:type,s:blob.size,u:fr.result,by:S.me.id||'',at:nowISO()}); };
+          fr.readAsDataURL(blob);
+        });
+      },
+      url:function(m){ return Promise.resolve(m.u||''); },
+      del:function(){ return Promise.resolve(); }
+    };
+  }
+  function scaleTo(img,max){
+    var r=Math.min(1,max/Math.max(img.width,img.height));
+    var cv=document.createElement('canvas');
+    cv.width=Math.max(1,Math.round(img.width*r)); cv.height=Math.max(1,Math.round(img.height*r));
+    var cx=cv.getContext('2d'); cx.imageSmoothingQuality='high';
+    cx.fillStyle='#fff'; cx.fillRect(0,0,cv.width,cv.height);   /* 투명 PNG가 검게 나오지 않게 */
+    cx.drawImage(img,0,0,cv.width,cv.height);
+    return cv;
+  }
+  function cvBlob(cv,q){
+    return new Promise(function(res,rej){
+      cv.toBlob(function(b){ b?res(b):rej(new Error('그림을 변환하지 못했습니다')); },'image/jpeg',q);
+    });
+  }
+  function loadImgFile(f){
+    return new Promise(function(res,rej){
+      var fr=new FileReader();
+      fr.onerror=function(){rej(new Error('읽지 못했습니다'));};
+      fr.onload=function(){
+        var im=new Image();
+        im.onerror=function(){rej(new Error('그림 형식을 알 수 없습니다'));};
+        im.onload=function(){res(im);};
+        im.src=fr.result;
+      };
+      fr.readAsDataURL(f);
+    });
+  }
+  function evFiles(d){ return (d&&d.files)||[]; }
+  function canAttach(d){
+    if(!writable())return false;
+    var st=docStatus(d);
+    if(st==='draft')    return d.drafter===S.me.id||S.me.canEdit;
+    /* 승인 뒤에는 회계가 이체확인증을 붙여야 한다 */
+    if(st==='approved') return myRole()==='accounting'||S.me.canEdit;
+    return false;
+  }
+  function addEvidence(files){
+    var d=S.docSel&&S.docs[S.docSel];
+    if(!d||!S.db||!canAttach(d))return;
+    var list=Array.prototype.slice.call(files||[]); if(!list.length)return;
+    if(evFiles(d).length+list.length>EV_MAX) return errbar('증빙은 문서 한 장에 '+EV_MAX+'개까지입니다');
+    var B=fileBackend(), added=[];
+    S.upBusy=true; render();
+    var seq=Promise.resolve();
+    list.forEach(function(f){
+      seq=seq.then(function(){
+        if(f.size>EV_SIZE*1024*1024) throw new Error(EV_SIZE+'MB가 넘습니다');
+        if(/^image\//.test(f.type)){
+          /* 사진은 줄여서 올린다. 요즘 폰 사진은 한 장에 5MB가 넘는데
+             영수증은 1600px이면 글자가 다 읽힌다. */
+          return loadImgFile(f).then(function(im){
+            var th=scaleTo(im,200).toDataURL('image/jpeg',0.68);
+            return cvBlob(scaleTo(im,1600),0.82).then(function(b){
+              return B.put(d.id,f.name,'image/jpeg',b).then(function(m){ m.th=th; added.push(m); });
+            });
+          });
+        }
+        return B.put(d.id,f.name,f.type||'application/octet-stream',f).then(function(m){ added.push(m); });
+      }).catch(function(e){
+        var msg=(e&&(e.message||e.error||e.code))||'';
+        if(/bucket/i.test(String(msg))) msg='증빙 보관함(evidence)이 아직 없습니다. supabase/storage.sql 을 한 번 실행해 주세요.';
+        errbar((f.name||'파일')+' — '+msg);
+      });
+    });
+    seq.then(function(){
+      S.upBusy=false;
+      if(!added.length) return render();
+      var cur=S.docs[d.id]; if(!cur) return render();
+      cur.files=evFiles(cur).concat(added);
+      var body=clone(cur); delete body.id; body.updatedAt=nowISO();
+      S.db.doc('docs/'+cur.id).set(body)
+        .then(function(){ flash('증빙 '+added.length+'개를 첨부했습니다'); render(); })
+        .catch(function(e){ errbar('증빙 기록 실패 '+(e&&e.code||'')); render(); });
+    });
+  }
+  function openEvidence(i){
+    var d=S.docSel&&S.docs[S.docSel]; if(!d)return;
+    var m=evFiles(d)[i]; if(!m)return;
+    /* 주소를 받아온 뒤에 창을 열면 팝업 차단에 걸린다. 먼저 빈 창을 띄워 둔다. */
+    var w=window.open('','_blank');
+    fileBackend().url(m).then(function(u){
+      if(!u){ if(w)w.close(); return errbar('파일을 찾지 못했습니다'); }
+      if(w) w.location.href=u; else location.href=u;
+    }).catch(function(e){
+      if(w)w.close(); errbar('파일을 열지 못했습니다 '+(e&&(e.message||e.code)||''));
+    });
+  }
+  function removeEvidence(i){
+    var d=S.docSel&&S.docs[S.docSel]; if(!d||!S.db)return;
+    var m=evFiles(d)[i]; if(!m)return;
+    if(!(canAttach(d)&&(m.by===S.me.id||S.me.canEdit))) return errbar('올린 사람만 지울 수 있습니다');
+    if(payState(d)==='paid'&&!S.me.canEdit) return errbar('지급이 끝난 건의 증빙은 지울 수 없습니다');
+    fileBackend().del(m).catch(function(){});   /* 보관함에서 못 지워도 목록에서는 뺀다 */
+    d.files=evFiles(d).filter(function(_,k){return k!==i;});
+    var body=clone(d); delete body.id; body.updatedAt=nowISO();
+    S.confirmFile=null;
+    S.db.doc('docs/'+d.id).set(body)
+      .then(function(){ flash('증빙을 지웠습니다'); render(); })
+      .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); render(); });
+  }
+  function kb(n){
+    n=num(n,0);
+    return n>=1048576?(n/1048576).toFixed(1)+'MB':Math.max(1,Math.round(n/1024))+'KB';
+  }
+  function evidenceCard(d){
+    var fs=evFiles(d), can=canAttach(d), st=docStatus(d);
+    var grid=fs.map(function(m,i){
+      var del=can&&(m.by===S.me.id||S.me.canEdit)&&(payState(d)!=='paid'||S.me.canEdit);
+      var face=m.th||m.u&&/^image\//.test(m.t||'')?m.th||m.u:'';
+      return '<div class="ev'+(S.confirmFile===i?' sure':'')+'">'+
+        (face
+          ? '<button type="button" class="shot" data-evopen="'+i+'" style="background-image:url('+face+')" aria-label="'+esc(m.n)+' 열기"></button>'
+          : '<button type="button" class="shot file" data-evopen="'+i+'" aria-label="'+esc(m.n)+' 열기">'+
+              ICON.clip+(/pdf/i.test(m.t||'')?'PDF':'파일')+'</button>')+
+        '<span class="cap"><b title="'+esc(m.n)+'">'+esc(m.n)+'</b>'+kb(m.s)+' · '+esc(nameOf(m.by))+'</span>'+
+        (del?(S.confirmFile===i
+          ? '<button type="button" class="x" data-evyes="'+i+'" title="정말 지웁니다" style="background:var(--bad)">✓</button>'
+          : '<button type="button" class="x" data-evdel="'+i+'" aria-label="삭제">×</button>'):'')+
+      '</div>';
+    }).join('');
+    var warn='';
+    if(!fs.length&&st!=='draft') warn='<div class="note n-warn" style="margin:0 0 12px">증빙이 없습니다. 영수증·견적서·이체확인증을 붙여두면 결산과 감사 때 이 문서 하나로 끝납니다.</div>';
+    else if(!fs.length&&st==='draft') warn='<p class="hint" style="margin:0 0 10px">영수증·견적서를 미리 붙여두면 결재자가 바로 확인할 수 있습니다.</p>';
+    return '<section class="card"><h2>증빙 '+(fs.length?'('+fs.length+')':'')+'</h2>'+
+      warn+
+      (grid?'<div class="evgrid">'+grid+'</div>':'')+
+      (can
+        ? '<div class="drop'+(grid?'" style="margin-top:10px':'')+'" id="evDrop">'+
+            (S.upBusy?'올리는 중…':'눌러서 파일 고르기 · 또는 여기로 끌어다 놓기')+
+            '<br><span style="font-size:11px;color:var(--faint)">사진·PDF · 한 개 '+EV_SIZE+'MB까지 · 사진은 자동으로 줄여서 올립니다</span></div>'+
+          '<input type="file" id="evFile" accept="image/*,application/pdf" multiple hidden>'
+        : (grid?'':'<div class="empty" style="padding:20px 8px">첨부된 증빙이 없습니다.</div>'))+
+    '</section>';
+  }
+
+  /* ============ 알림 ============ */
+  /* 알림은 docs 저장소의 notifs 컬렉션에 한 줄씩 쌓인다.
+     to 는 받을 사람 uid 배열, 또는 전원을 뜻하는 '*'.
+     읽은 시각은 사람마다 profiles/<uid>.notifReadAt 한 칸에만 적는다.
+     알림마다 사람 수만큼 읽음 표시를 만들면 금방 불어난다. */
+  function allUids(){
+    var m={};
+    if(S.user&&S.user.ids) S.user.ids().forEach(function(u){m[u]=1;});
+    Object.keys(S.roles).forEach(function(u){m[u]=1;});
+    Object.keys(S.profileRows).forEach(function(u){m[u]=1;});
+    return Object.keys(m);
+  }
+  function notify(to,text,docId){
+    if(!S.db||!S.me.id)return;
+    var list;
+    if(to==='*'){ list='*'; }
+    else {
+      list=(Array.isArray(to)?to:[to]).filter(function(u){return u&&u!==S.me.id;});
+      /* 중복 제거 — 같은 사람이 결재선에 두 번 들어갈 수 있다 */
+      list=list.filter(function(u,i){return list.indexOf(u)===i;});
+      if(!list.length)return;
+    }
+    var id='n'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+    S.db.doc('notifs/'+id).set({to:list,text:text,doc:docId||'',by:S.me.id,at:nowISO()})
+      .catch(function(){});
+    pruneNotifs();
+  }
+  /* 90일이 지난 알림은 지운다. 아무도 안 치우면 영원히 쌓인다. */
+  function pruneNotifs(){
+    if(!S.db)return;
+    var cut=new Date(Date.now()-90*86400000).toISOString();
+    Object.keys(S.notifs).forEach(function(k){
+      if((S.notifs[k].at||'')<cut) S.db.doc('notifs/'+k).delete().catch(function(){});
+    });
+  }
+  function notifsFor(){
+    var me=S.me.id; if(!me)return [];
+    return Object.keys(S.notifs).map(function(k){ var o=clone(S.notifs[k]); o.id=k; return o; })
+      .filter(function(n){
+        if(n.by===me) return false;                       /* 내가 만든 알림은 나한테 안 온다 */
+        return n.to==='*' || (Array.isArray(n.to)&&n.to.indexOf(me)>=0);
+      })
+      .sort(function(a,b){ return (a.at||'')<(b.at||'')?1:-1; })
+      .slice(0,60);
+  }
+  function unreadCount(){
+    var r=S.notifReadAt||'';
+    return notifsFor().filter(function(n){return (n.at||'')>r;}).length;
+  }
+  function saveProfile(patch){
+    if(!S.db||!S.me.id)return Promise.resolve();
+    /* 아직 내 행을 못 받았으면 쓰지 않는다. set 은 통째로 덮어쓰므로
+       지금 쓰면 남아 있던 프로필 사진이 사라진다. */
+    if(!S.profilesLoaded)return Promise.resolve();
+    var body=clone(S.myProfile||{});
+    Object.keys(patch).forEach(function(k){ body[k]=patch[k]; });
+    body.updatedAt=nowISO();
+    S.myProfile=body;
+    return S.db.doc('profiles/'+S.me.id).set(body);
+  }
+  function markNotifsRead(){
+    S.notifReadAt=nowISO();
+    saveProfile({notifReadAt:S.notifReadAt}).catch(function(){});
+  }
+  function syncMyProfile(){
+    if(!S.me.id||!S.profilesLoaded)return;
+    var row=S.profileRows[S.me.id];
+    S.myProfile=row||S.myProfile;
+    S.notifReadAt=(row&&row.notifReadAt)||S.notifReadAt||'';
+    announceJoin(S.profileRows);
+  }
+  var joinAnnounced=false;
+  /* 처음 들어온 사람은 자기 손으로 "합류했습니다"를 띄운다.
+     members 행이 만들어진 지 14일이 넘었으면 기존 사람이므로 조용히 넘어간다.
+     (이 기능을 붙이기 전부터 쓰던 사람들이 한꺼번에 '신규'로 뜨는 걸 막는다) */
+  function announceJoin(rows){
+    if(joinAnnounced||!S.me.id||!S.db)return;
+    joinAnnounced=true;
+    if(rows[S.me.id])return;
+    var fresh=!S.me.joinedAt || (Date.now()-Date.parse(S.me.joinedAt))<14*86400000;
+    saveProfile({avatar:'',joinedAt:nowISO(),notifReadAt:nowISO()}).then(function(){
+      if(fresh) notify('*', (S.me.name||'새 사용자')+' 님이 마블 ERP에 합류했습니다', '');
+    }).catch(function(){});
+  }
+  function docLabel(d){ return (d.subject||d.title||'문서'); }
+  /* 결재가 움직일 때마다 관련된 사람에게만 보낸다. */
+  function notifyDoc(d,kind){
+    var me=S.me.name||'누군가', ttl='「'+docLabel(d)+'」';
+    var pend=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';})
+                          .map(function(x){return x.uid;});
+    var next=pend[0];
+    if(kind==='submit'){
+      if(next) notify(next, '결재 차례입니다 — '+ttl, d.id);
+      var others=allUids().filter(function(u){return pend.indexOf(u)<0;});
+      notify(others, me+' 님이 '+ttl+'을(를) 기안했습니다', d.id);
+    }
+    else if(kind==='approve'){
+      if(next){
+        notify(next, '결재 차례입니다 — '+ttl, d.id);
+        notify(d.drafter, me+' 님이 '+ttl+'을(를) 승인했습니다', d.id);
+      }else{
+        notify(d.drafter, ttl+'이(가) 최종 승인되었습니다', d.id);
+        if(d.type==='expense') notify(accountingUids(), ttl+' 지급 처리를 기다립니다', d.id);
+      }
+    }
+    else if(kind==='reject') notify(d.drafter, me+' 님이 '+ttl+'을(를) 반려했습니다', d.id);
+    else if(kind==='cancel') notify(pend, me+' 님이 '+ttl+' 결재를 취소했습니다', d.id);
   }
 
   /* ============ 정산 계산 ============ */
@@ -594,6 +939,27 @@
     }
     var t=$('#ptitle');
     if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',roles:'역할'}[S.view]||'마블 ERP';
+    renderBell();
+  }
+  function renderBell(){
+    var b=$('#bellBtn'), pn=$('#bellPanel'); if(!b||!pn)return;
+    if(!S.me.id){ b.hidden=true; pn.hidden=true; return; }
+    b.hidden=false;
+    var n=unreadCount();
+    b.innerHTML=ICON.bell+(n?'<span class="dot">'+(n>99?'99+':n)+'</span>':'');
+    b.setAttribute('aria-expanded',S.bellOpen?'true':'false');
+    b.setAttribute('aria-label','알림'+(n?' '+n+'건':''));
+    pn.hidden=!S.bellOpen;
+    if(!S.bellOpen){ pn.innerHTML=''; return; }
+    var list=notifsFor(), rd=S.notifReadAt||'';
+    pn.innerHTML='<h3>알림'+(n?'<button type="button" id="nAllRead">모두 읽음</button>':'')+'</h3>'+
+      (list.length?list.map(function(x){
+        return '<button type="button" class="nrow'+((x.at||'')>rd?' unread':'')+'"'+
+          (x.doc?' data-ngo="'+esc(x.doc)+'"':'')+'>'+
+          '<span class="mark"></span><span class="tx">'+esc(x.text)+
+          '<span class="tm">'+esc(shortTime(x.at))+'</span></span></button>';
+      }).join('')
+      :'<div class="empty">아직 알림이 없습니다.</div>');
   }
 
   /* ---- 대시보드 ---- */
@@ -820,6 +1186,7 @@
           '<div class="note n-info" style="margin:12px 0 0;display:flex;justify-content:space-between;align-items:baseline">'+
             '<b>합계</b><b id="xTotal" style="font-family:var(--font-num);font-size:17px">'+won(total)+'</b></div>'+
         '</section>'+
+        evidenceCard(d)+
         '<section class="card"><h2>지출 사유</h2>'+
           '<textarea id="xNote" rows="3"'+dis+' placeholder="무엇을 위한 지출인지 적어주세요">'+esc(d.note||'')+'</textarea>'+
         '</section>'+
@@ -1256,6 +1623,7 @@
     var sum=function(a){return a.reduce(function(x,d){return x+expTotal(d);},0);};
     var thisMonth=today().slice(0,7);
     var mPaid=paid.filter(function(d){return String((d.pay||{}).at||'').slice(0,7)===thisMonth;});
+    var noEv=paid.filter(function(d){return !evFiles(d).length;});
 
     var tabs=[['pending','지급 대기'],['paid','지급 완료'],['all','전체']];
     var list=acctList(S.acctTab);
@@ -1279,6 +1647,7 @@
         tile('이번 달 지급', won(sum(mPaid)), mPaid.length+'건')+
         tile('지급 완료 누계', won(sum(paid)), paid.length+'건')+
         tile('결재 중 지출', won(sum(inflight)), inflight.length+'건')+
+        tile('증빙 없는 지급', noEv.length+'건', noEv.length?'영수증을 붙여주세요':'모두 갖춰졌습니다', noEv.length>0)+
       '</div>'+
 
       '<section class="card"><h2>'+byLabel[S.acctBy]+'별 지출</h2>'+
@@ -1308,7 +1677,7 @@
             '<span class="n">'+acctList(t[0]).length+'</span></button>';
         }).join('')+'</div>'+
         (list.length
-          ? '<div class="scroll"><table><thead><tr><th>제목</th><th>행사</th><th>계정과목</th><th>받는 사람</th><th class="num">금액</th><th>지급</th><th class="num">일자</th></tr></thead><tbody>'+
+          ? '<div class="scroll"><table><thead><tr><th>제목</th><th>행사</th><th>계정과목</th><th>받는 사람</th><th class="num">금액</th><th>증빙</th><th>지급</th><th class="num">일자</th></tr></thead><tbody>'+
             list.map(function(d){
               var ps=payState(d), ev=d.eventId&&S.events[d.eventId];
               return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
@@ -1317,6 +1686,9 @@
                 '<td style="color:var(--muted)">'+esc(d.account||'—')+'</td>'+
                 '<td>'+esc(d.payee||'—')+'</td>'+
                 '<td class="num" style="font-family:var(--font-num)">'+won(expTotal(d))+'</td>'+
+                '<td>'+(evFiles(d).length
+                  ? '<span class="pill p-approved">'+evFiles(d).length+'</span>'
+                  : '<span class="pill p-rejected">없음</span>')+'</td>'+
                 '<td><span class="pill p-'+(ps==='paid'?'approved':'pending')+'">'+PAY_LABEL[ps]+'</span></td>'+
                 '<td class="num" style="color:var(--muted)">'+esc(ps==='paid'?shortTime((d.pay||{}).at):(d.dueDate||d.date||''))+'</td></tr>';
             }).join('')+'</tbody></table></div>'
@@ -1333,7 +1705,9 @@
     body.pay={state:'paid', at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
     body.updatedAt=nowISO();
     S.db.doc('docs/'+d.id).set(body).then(function(){
-      S.confirmPay=null; S.payMemo=''; flash('지급 완료로 기록했습니다'); render();
+      S.confirmPay=null; S.payMemo='';
+      notify(d.drafter, '「'+docLabel(d)+'」 '+won(expTotal(d))+' 지급이 끝났습니다', d.id);
+      flash('지급 완료로 기록했습니다'); render();
     }).catch(function(e){ errbar('지급 처리 실패 '+(e&&(e.code||e.message)||'')); });
   }
 
@@ -1484,15 +1858,15 @@
   function onAvatarFile(file){
     readImage(file,8,function(img){
       if(!S.db||!S.me.id)return;
-      var out=fitSquare(img,180);
-      S.db.doc('profiles/'+S.me.id).set({avatar:out,updatedAt:nowISO()})
+      /* set 은 통째로 덮어쓴다. 알림 읽은 시각이 같이 날아가지 않게 합친다. */
+      saveProfile({avatar:fitSquare(img,180)})
         .then(function(){ flash('프로필 사진을 바꿨습니다'); })
         .catch(function(e){ errbar('사진 저장 실패 '+(e&&(e.code||e.message)||'')); });
     });
   }
   function clearAvatar(){
     if(!S.db||!S.me.id)return;
-    S.db.doc('profiles/'+S.me.id).set({avatar:'',updatedAt:nowISO()})
+    saveProfile({avatar:''})
       .then(function(){ flash('프로필 사진을 지웠습니다'); })
       .catch(function(e){ errbar('삭제 실패 '+(e&&(e.code||e.message)||'')); });
   }
@@ -1520,6 +1894,20 @@
   document.addEventListener('click',function(e){
    try{
     var t=e.target,el; if(!t||!t.closest)return;
+    if(t.closest('#bellBtn')){
+      S.bellOpen=!S.bellOpen;
+      if(S.bellOpen) setTimeout(markNotifsRead,1200);   /* 열어두고 읽을 시간을 준다 */
+      renderBell(); return;
+    }
+    if((el=t.closest('[data-ngo]'))){
+      var nd=el.dataset.ngo;
+      S.bellOpen=false; markNotifsRead();
+      if(S.docs[nd]){ S.view='docs'; S.docSel=nd; remember(); render(); }
+      else { errbar('그 문서는 더 이상 없습니다'); renderBell(); }
+      return;
+    }
+    if(t.id==='nAllRead'){ markNotifsRead(); renderBell(); return; }
+    if(S.bellOpen&&!t.closest('#bellPanel')){ S.bellOpen=false; markNotifsRead(); renderBell(); }
     if(t.closest('[data-home]')){ goHome(); return; }
     if((el=t.closest('[data-nav]'))){ S.view=el.dataset.nav; S.sel=null; S.docSel=null; S.confirmDel=null; S.confirmDocDel=null; remember(); render(); return; }
     if((el=t.closest('[data-go]'))){
@@ -1559,6 +1947,10 @@
         touch('doc',dc.id); render(); return;
       }
       if(t.id==='docCopy') return copyDoc(dc);
+      if(t.id==='evDrop'){ var fi=$('#evFile'); if(fi)fi.click(); return; }
+      if((el=t.closest('[data-evopen]'))) return openEvidence(+el.dataset.evopen);
+      if((el=t.closest('[data-evdel]'))){ S.confirmFile=+el.dataset.evdel; render(); return; }
+      if((el=t.closest('[data-evyes]'))) return removeEvidence(+el.dataset.evyes);
       if(t.id==='eiAdd'){ dc.items=(dc.items||[]).concat([{name:'',qty:1,price:0,note:''}]); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-eidel]'))){ dc.items.splice(+el.dataset.eidel,1); touch('doc',dc.id); render(); return; }
       if(t.id==='payGo'){ var pm=$('#payMemo'); S.payMemo=pm?pm.value:''; S.confirmPay=dc.id; render(); return; }
@@ -1624,6 +2016,20 @@
     if(fmap[t.id]){ ev[fmap[t.id]]=t.value; touch('ev',ev.id); softNumbers(ev); }
    }catch(err){ errbar('입력 처리 중 '+(err&&err.message||err)); }
   });
+  ['dragenter','dragover'].forEach(function(k){
+    document.addEventListener(k,function(e){
+      var z=e.target&&e.target.closest&&e.target.closest('#evDrop');
+      if(!z)return; e.preventDefault(); z.classList.add('over');
+    });
+  });
+  document.addEventListener('dragleave',function(e){
+    var z=e.target&&e.target.closest&&e.target.closest('#evDrop'); if(z)z.classList.remove('over');
+  });
+  document.addEventListener('drop',function(e){
+    var z=e.target&&e.target.closest&&e.target.closest('#evDrop'); if(!z)return;
+    e.preventDefault(); z.classList.remove('over');
+    addEvidence(e.dataTransfer&&e.dataTransfer.files);
+  });
   document.addEventListener('keydown',function(e){
     if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.closest&&e.target.closest('[data-home]')){
       e.preventDefault(); goHome();
@@ -1635,6 +2041,7 @@
     if(t.id==='nform'&&S.newPanel){ S.newPanel.form=t.value; render(); return; }
     if(t.id==='logoFile') return onLogoFile(t.files&&t.files[0]);
     if(t.id==='avaFile')  return onAvatarFile(t.files&&t.files[0]);
+    if(t.id==='evFile'){ addEvidence(t.files); t.value=''; return; }
     var xd=S.docSel&&S.docs[S.docSel];
     if(xd&&xd.type==='expense'){
       var sm={xEvent:'eventId',xAccount:'account',xMethod:'method'};
@@ -1695,7 +2102,7 @@
     }
     d.updatedAt=nowISO();
     var body=clone(d); delete body.id;
-    S.db.doc('docs/'+d.id).set(body).then(function(){render();})
+    S.db.doc('docs/'+d.id).set(body).then(function(){ notifyDoc(d,kind); render(); })
       .catch(function(e){errbar('처리 실패 '+(e&&e.code||''));});
   }
   function copyDoc(d){
@@ -1869,6 +2276,7 @@
     return {
       me:function(){return Promise.resolve(me);},
       id:function(){return Promise.resolve(me.id);},
+      ids:function(){return Object.keys(DEMO_NAMES);},
       can:function(){return Promise.resolve(true);},
       isOwner:function(){return Promise.resolve(true);},
       canEdit:function(){return Promise.resolve(true);},
@@ -1972,7 +2380,8 @@
     var uid=session.user.id, row=members[uid]||{};
     var isAdmin=row.role==='admin';
     var me={id:uid,name:row.name||session.user.email||'사용자',avatarUrl:AV,color:'#1F6F4A',
-            email:session.user.email||null,isOwner:isAdmin,canEdit:isAdmin};
+            email:session.user.email||null,isOwner:isAdmin,canEdit:isAdmin,
+            joinedAt:row.createdAt||null};
     function prof(i){
       var r=members[i]||{};
       return {id:i,name:r.name||r.email||'알 수 없음',avatarUrl:AV,color:'#888',
@@ -1981,6 +2390,7 @@
     return {
       me:function(){return Promise.resolve(me);},
       id:function(){return Promise.resolve(uid);},
+      ids:function(){return Object.keys(members);},
       can:function(n){return Promise.resolve(n==='data.write'?true:isAdmin);},
       isOwner:function(){return Promise.resolve(isAdmin);},
       canEdit:function(){return Promise.resolve(isAdmin);},
@@ -2064,10 +2474,10 @@
       sb.auth.getSession().then(function(r){
         var session=r.data&&r.data.session;
         if(!session){ S.loading=false; return renderLogin(sb,'',false); }
-        sb.from('members').select('uid,email,name,role').then(function(m){
+        sb.from('members').select('uid,email,name,role,created_at').then(function(m){
           var map={};
           if(m.error) errbar('구성원을 불러오지 못했습니다: '+m.error.message);
-          (m.data||[]).forEach(function(row){ map[row.uid]={email:row.email,name:row.name,role:row.role}; });
+          (m.data||[]).forEach(function(row){ map[row.uid]={email:row.email,name:row.name,role:row.role,createdAt:row.created_at}; });
           wire(sbStore(sb), sbUser(session,map));
         });
       });
@@ -2104,7 +2514,8 @@
       S.db=db; S.user=user;
       if(S.user){
         S.user.me().then(function(me){
-          S.me.id=me.id;S.me.name=me.name;S.me.avatarUrl=me.avatarUrl;S.me.canEdit=me.canEdit;S.me.isOwner=me.isOwner;
+          S.me.id=me.id;S.me.name=me.name;S.me.avatarUrl=me.avatarUrl;S.me.canEdit=me.canEdit;S.me.isOwner=me.isOwner;S.me.joinedAt=me.joinedAt||null;
+          syncMyProfile();
           var w=$('#who');
           if(w){
             w.innerHTML='<img alt=""><span></span>'+(S.sb?'<button class="btn sm" id="signOut" style="margin-left:6px">로그아웃</button>':'');
@@ -2143,9 +2554,16 @@
       },function(){});
 
       S.db.collection('profiles').onSnapshot(function(snap){
-        var next={};
-        snap.docs.forEach(function(d){ var o=d.data()||{}; if(o.avatar) next[d.id]=o.avatar; });
-        S.avatars=next; render();
+        var av={}, rows={};
+        snap.docs.forEach(function(d){ var o=d.data()||{}; rows[d.id]=o; if(o.avatar) av[d.id]=o.avatar; });
+        S.avatars=av; S.profileRows=rows; S.profilesLoaded=true;
+        syncMyProfile();
+        render();
+      },function(){});
+
+      S.db.collection('notifs').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=d.data()||{}; });
+        S.notifs=next; render();
       },function(){});
 
       S.db.doc('config/logo').onSnapshot(function(d){

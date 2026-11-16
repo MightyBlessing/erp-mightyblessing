@@ -1,45 +1,52 @@
 # 마블 ERP
 
-마이티블레싱 내부 결재·정산 시스템. 단일 HTML 페이지로 동작하며 Claude Artifact로 배포한다.
+마이티블레싱 내부 결재·정산 시스템. 단일 HTML 페이지 하나로 돌아간다.
 
-**운영 링크** — https://claude.ai/artifact/SAoCvjT3Bmuswfp9Ekbhb8
+**운영 링크** — https://erp-mightyblessing-i7xj.vercel.app
+저장소는 Supabase. 로그인은 메일 링크 인증이고 `@mightyblessing.com` 주소만 들어온다.
 
 ## 구성
 
 | 파일 | 용도 |
 |---|---|
-| `erp.html` | 원본. Claude Artifact에 게시하는 본문 (doctype·head 없음 — 아티팩트가 붙여준다) |
-| `index.html` | 독립 실행용. `erp.html`을 doctype·charset으로 감싼 것. Vercel이 이걸 띄운다 |
+| `erp.html` | 원본. 여기만 고친다 |
+| `index.html` | 배포본. `erp.html`을 doctype·charset으로 감싼 것. Vercel이 이걸 띄운다 |
 | `build.sh` | `erp.html` → `index.html` 생성 |
+| `config.js` | Supabase 주소와 publishable 키. 공개돼도 되는 값만 넣는다 |
+| `supabase/schema.sql` | 테이블·RLS·실시간. 최초 1회 |
+| `supabase/domain-guard.sql` | 도메인 제한 |
+| `supabase/profiles-guard.sql` | 남의 프로필 사진을 못 바꾸게 |
+| `supabase/storage.sql` | 증빙 보관함(`evidence` 버킷) |
+
+SQL 파일은 Supabase 대시보드 → SQL Editor 에 **내용을 붙여넣어** 실행한다.
+파일 경로를 붙여넣으면 `syntax error at or near "~/"` 가 난다.
 
 `erp.html`을 고친 뒤 반드시 `sh build.sh`를 돌려 `index.html`을 다시 만든다. 안 하면 Vercel 쪽만 옛 버전이 남고, **charset이 빠져 한글이 깨진다.**
 
-## 두 가지 배포
+## 저장소 세 갈래
 
-| | Claude Artifact | Vercel |
+화면은 하나인데 뒤가 셋이다. `db.collection(n).doc(id)` 라는 같은 모양 뒤에 숨겨 둔다.
+
+| | 언제 | 데이터 |
 |---|---|---|
-| 주소 | claude.ai/artifact/… | …vercel.app |
-| 누가 보나 | claude.ai 계정 있는 사람 | 누구나 |
-| 데이터 | 서버 저장, 실시간 공유 | **없음 — 브라우저에만, 공유 안 됨** |
-| 로그인 | claude.ai 계정 | 없음 |
-| 용도 | 실제 운영 | 디자인·흐름 QA |
+| Supabase | `config.js`가 채워져 있을 때 (= 운영) | `docs` 테이블 한 장, 실시간 동기화 |
+| Claude Artifact | `window.claude`가 있을 때 | 아티팩트의 `db` |
+| 데모 | 둘 다 아닐 때 | localStorage. 하단에 주황색 띠가 뜬다 |
 
-Vercel에서는 `window.claude`가 없으므로 6초 뒤 **데모 모드**로 넘어간다. 가짜 저장소(localStorage)와 예시 데이터로 화면을 둘러볼 수 있고, 하단에 주황색 안내 띠가 뜬다.
+**데모 모드 예시 데이터에 실제 회사 데이터를 넣지 않는다.**
 
-**데모 모드 예시 데이터에 실제 회사 데이터를 넣지 않는다.** Vercel 주소는 공개될 수 있다.
-
-- 저장소: Claude Artifact의 `db` 기능 (문서 단위 JSON, 실시간 동기화)
-- 로그인: Claude Artifact의 `user` 기능 (claude.ai 계정이 그대로 신원)
-- 권한: 공유 등급으로 결정 (Viewer = 읽기, Contributor = 작성·승인, Editor = 역할 지정)
+권한은 `members.role` 로 정한다 — `member` / `accounting` / `ceo` / `admin`.
+`admin` 만 역할 지정과 로고·직인 교체를 할 수 있다 (RLS가 `config` 컬렉션을 막는다).
 
 ## 모듈
 
 | 메뉴 | 내용 |
 |---|---|
 | 대시보드 | 결재 대기, 진행 중 문서, 월별 사례비 지급 |
-| 전자결재 | 공문 작성·결재선·승인/반려. 문서함 6탭 |
+| 전자결재 | 공문(4서식·대내외) / 지출결의서. 결재선·승인·반려, 승인 시 직인 찍힌 PDF |
+| 회계 | 승인된 지출의 지급 처리, 행사·계정과목·지급수단별 집계, 증빙 유무 |
 | 정산 | 행사별 사례비 계산 + 결재 |
-| 역할 | 회계·대표 지정 (Editor 이상) |
+| 역할 | 회계·대표 지정, 로고·직인·프로필 사진 (admin) |
 
 ## 데이터
 
@@ -48,8 +55,19 @@ Vercel에서는 `window.claude`가 없으므로 6초 뒤 **데모 모드**로 �
 | `events` | 행사 정산 | interact |
 | `approvals` | 정산 결재 기록 | interact |
 | `docs` | 전자결재 문서 | interact |
-| `txns` | 회계 거래 (미구현) | interact |
-| `config/roles` | 역할 지정 | admin |
+| `notifs` | 알림 한 줄씩 (`to`는 uid 배열 또는 전원을 뜻하는 `'*'`) | interact |
+| `profiles` | 프로필 사진, 알림 읽은 시각 | **본인 행만** |
+| `config/roles` `config/logo` `config/seal` | 역할·로고·직인 | admin |
+
+증빙 파일은 `docs` 안에 넣지 않는다. Storage의 `evidence` 버킷에 올리고,
+문서에는 경로와 200px 미리보기만 남긴다. 사진을 JSON에 넣으면
+문서함을 열 때마다 전부 따라 내려와 느려진다.
+
+알림 읽음 표시는 사람마다 `profiles/<uid>.notifReadAt` 한 칸뿐이다.
+알림마다 사람 수만큼 읽음 행을 만들면 금방 불어난다.
+
+`profiles` 를 저장할 때는 반드시 `saveProfile()` 을 쓴다. `set` 은 통째로 덮어쓰므로
+직접 쓰면 프로필 사진이나 읽은 시각이 날아간다.
 
 ## 사례비 계산 규칙
 
@@ -88,8 +106,15 @@ Artifact의 `db`가 내려주는 문서 본문은 **동결(frozen)되어 있다.
 
 로컬 파일로 열면 `window.claude`가 없어 이 동결 동작이 재현되지 않는다. 게시 후 실제 링크에서 눌러보고 확인한다.
 
+## PDF
+
+브라우저 인쇄창을 거치면 날짜·쪽번호·웹주소가 종이에 같이 찍힌다.
+CSS로는 못 막고 사람마다 설정이 다르다. 그래서 html2canvas + jsPDF로
+화면을 직접 찍어 A4 파일로 만든다. `인쇄` 버튼은 종이로 뽑을 때만 쓴다.
+
 ## 다음 단계
 
-- 회계 모듈: 수입·지출 등록, 승인된 지출결의서 → 지급 대기 → 지급 완료 시 잔액 반영 (중복 처리 방지)
-- 지출결의서 등 결재 양식 추가
+- 수입·예산·자금 관리
 - 손익·재무 보고서, 엑셀 내보내기
+- 결재 양식 추가 (휴가원·품의서)
+- 팀원 초대와 역할 배정
