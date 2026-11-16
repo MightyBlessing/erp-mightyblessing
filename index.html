@@ -481,7 +481,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',payOn:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
     members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,memberEdit:null,
@@ -986,6 +986,19 @@
   function payState(d){
     var p=d.pay||{}; return p.state==='paid'?'paid':'pending';
   }
+  /* 돈이 실제로 움직인 날. 원천세·지급명세서는 이 날짜로 끊는다.
+     at(처리한 시각)은 '언제 버튼을 눌렀나'일 뿐이라 월말·월초에 어긋난다.
+     예전 건에는 on 이 없으니 그때는 at 을 쓴다. */
+  function paidOn(d){
+    var p=d.pay||{};
+    return String(p.on||p.at||'').slice(0,10);
+  }
+  function evPaidOn(ev){
+    if(ev&&ev.paidOn) return String(ev.paidOn).slice(0,10);
+    var log=apprOf(ev.id).filter(function(a){return a.kind==='paid';});
+    var last=log[log.length-1];
+    return last?String(last.at||'').slice(0,10):(ev.date||'');
+  }
   /* 지출결의서는 공문과 같은 결재 엔진을 쓴다. 승인 이후 단계만 따로 붙는다. */
   function newExpenseBody(){
     var y=new Date().getFullYear();
@@ -1296,13 +1309,19 @@
     if(st!=='approved'){
       payBlock='<div class="empty" style="padding:20px 8px">결재가 끝나면 지급 처리를 할 수 있습니다.</div>';
     }else if(ps==='paid'){
-      payBlock='<div class="note n-ok" style="margin:0"><b>지급 완료</b> · '+esc(shortTime((d.pay||{}).at))+' · 처리 '+esc(nameOf((d.pay||{}).by))+
+      payBlock='<div class="note n-ok" style="margin:0"><b>지급 완료</b> · 이체일 '+esc(paidOn(d)||'—')+' · 처리 '+esc(nameOf((d.pay||{}).by))+
         ((d.pay||{}).memo?'<br>'+esc(d.pay.memo):'')+'</div>';
     }else if(canPay){
       payBlock='<div class="note n-warn" style="margin:0 0 12px">승인되었습니다. <b>실제로 송금한 뒤에</b> 아래를 눌러주세요. 한 번 기록하면 되돌릴 수 없습니다.</div>'+
-        '<div class="field"><label for="payMemo">지급 메모 (선택)</label><input id="payMemo" placeholder="예: 11/16 국민은행 이체" value="'+esc(S.payMemo||'')+'"></div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="payOn">이체일</label>'+
+            '<input id="payOn" type="date" value="'+esc(S.payOn||today())+'"></div>'+
+          '<div class="field"><label for="payMemo">지급 메모 (선택)</label>'+
+            '<input id="payMemo" placeholder="예: 국민은행 이체" value="'+esc(S.payMemo||'')+'"></div>'+
+        '</div>'+
+        '<p class="hint" style="margin:-4px 0 12px">통장에 찍힌 날짜입니다. 원천세·지급명세서를 이 날짜로 끊습니다.</p>'+
         '<div class="actions">'+(S.confirmPay===d.id
-          ? '<span style="color:var(--bad);font-size:12.5px;align-self:center">'+won(total)+' 지급 완료로 기록합니다</span>'+
+          ? '<span style="color:var(--bad);font-size:12.5px;align-self:center">'+esc(S.payOn||today())+' 에 '+won(total)+' 지급한 것으로 기록합니다</span>'+
             '<button class="btn danger sm" id="payYes">확인</button><button class="btn sm" id="payNo">취소</button>'
           : '<button class="btn primary" id="payGo">지급 완료 처리</button>')+'</div>';
     }else{
@@ -2061,7 +2080,7 @@
       stp(p.accDone,'2','회계 승인',p.acc.length?(p.okAcc.length+' / '+p.acc.length+'명 승인'):'회계 역할이 지정되지 않았습니다'),
       stp(p.confirms.length>0,'3','팀원 확인',p.confirms.length+'명 확인함'),
       stp(p.ceoDone,'4','대표 승인',p.ceoDone?'승인됨':'대표 승인 대기'),
-      stp(p.status==='paid','5','지급 완료',p.status==='paid'?'송금 완료':'지급 대기')
+      stp(p.status==='paid','5','지급 완료',p.status==='paid'?('이체일 '+(evPaidOn(ev)||'—')):'지급 대기')
     ].join('');
     var btns=[];
     if(writable()){
@@ -2072,7 +2091,11 @@
         if(!did('confirm'))btns.push('<button class="btn" data-act="confirm">확인했습니다</button>');
         if(iAcc||iCeo)btns.push('<button class="btn danger" data-act="reject">반려</button>');
       }
-      if(p.status==='approved'&&iAcc)btns.push('<button class="btn primary" data-act="paid">지급 완료</button>');
+      if(p.status==='approved'&&iAcc){
+        btns.push('<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">'+
+          '이체일 <input id="evPayOn" type="date" value="'+esc(S.payOn||today())+'" style="width:150px;padding:6px 8px"></span>');
+        btns.push('<button class="btn primary" data-act="paid">지급 완료</button>');
+      }
       if(p.status==='approved'&&!did('confirm'))btns.push('<button class="btn" data-act="confirm">확인했습니다</button>');
     }
     var log=p.list.slice().reverse().map(function(a){
@@ -2101,8 +2124,8 @@
     if(tab==='pending') all=all.filter(function(d){return payState(d)==='pending';});
     if(tab==='paid')    all=all.filter(function(d){return payState(d)==='paid';});
     all.sort(function(a,b){
-      var ka=(payState(a)==='paid'?((a.pay||{}).at||''):(a.dueDate||a.date||''));
-      var kb=(payState(b)==='paid'?((b.pay||{}).at||''):(b.dueDate||b.date||''));
+      var ka=(payState(a)==='paid'?paidOn(a):(a.dueDate||a.date||''));
+      var kb=(payState(b)==='paid'?paidOn(b):(b.dueDate||b.date||''));
       return kb<ka?-1:1;
     });
     return all;
@@ -2121,7 +2144,7 @@
     var inflight=expenses().filter(function(d){return ['submitted','progress'].indexOf(docStatus(d))>=0;});
     var sum=function(a){return a.reduce(function(x,d){return x+expTotal(d);},0);};
     var thisMonth=today().slice(0,7);
-    var mPaid=paid.filter(function(d){return String((d.pay||{}).at||'').slice(0,7)===thisMonth;});
+    var mPaid=paid.filter(function(d){return paidOn(d).slice(0,7)===thisMonth;});
     var noEv=paid.filter(function(d){return !evFiles(d).length;});
 
     var tabs=[['pending','지급 대기'],['paid','지급 완료'],['all','전체']];
@@ -2189,7 +2212,7 @@
                   ? '<span class="pill p-approved">'+evFiles(d).length+'</span>'
                   : '<span class="pill p-rejected">없음</span>')+'</td>'+
                 '<td><span class="pill p-'+(ps==='paid'?'approved':'pending')+'">'+PAY_LABEL[ps]+'</span></td>'+
-                '<td class="num" style="color:var(--muted)">'+esc(ps==='paid'?shortTime((d.pay||{}).at):(d.dueDate||d.date||''))+'</td></tr>';
+                '<td class="num" style="color:var(--muted)">'+esc(ps==='paid'?paidOn(d):(d.dueDate||d.date||''))+'</td></tr>';
             }).join('')+'</tbody></table></div>'
           : '<div class="empty"><strong>해당하는 지출이 없습니다</strong>전자결재에서 지출결의서를 올리면 여기에 모입니다.</div>')+
       '</section></div>';
@@ -2200,11 +2223,13 @@
     if(docStatus(d)!=='approved') return errbar('승인이 끝난 문서만 지급 처리할 수 있습니다');
     if(payState(d)==='paid')      return errbar('이미 지급 처리된 건입니다');
     if(!(myRole()==='accounting'||S.me.canEdit)) return errbar('회계 역할을 가진 사람만 지급 처리할 수 있습니다');
+    var on=String(S.payOn||'').slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('이체일을 넣어주세요');
     var body=clone(d); delete body.id;
-    body.pay={state:'paid', at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
+    body.pay={state:'paid', on:on, at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
     body.updatedAt=nowISO();
     S.db.doc('docs/'+d.id).set(body).then(function(){
-      S.confirmPay=null; S.payMemo='';
+      S.confirmPay=null; S.payMemo=''; S.payOn='';
       notify(d.drafter, '「'+docLabel(d)+'」 '+won(expTotal(d))+' 지급이 끝났습니다', d.id);
       flash('지급 완료로 기록했습니다'); render();
     }).catch(function(e){ errbar('지급 처리 실패 '+(e&&(e.code||e.message)||'')); });
@@ -2385,11 +2410,12 @@
   function repData(){
     var r=repRange();
     var evs=Object.keys(S.events).map(function(k){return S.events[k];})
-      .filter(function(e){ return inRange(e.date,r); })
+      /* 사례비가 나간 행사는 이체일로, 아직 안 나간 행사는 행사일로 본다. */
+      .filter(function(e){ return inRange(progress(e).status==='paid'?evPaidOn(e):e.date, r); })
       .sort(function(a,b){ return (a.date||'')<(b.date||'')?-1:1; });
     /* 지급이 끝난 지출결의서만. 기준일은 실제로 돈이 나간 날. */
     var exps=expenses().filter(function(d){
-      return docStatus(d)==='approved' && payState(d)==='paid' && inRange((d.pay||{}).at,r);
+      return docStatus(d)==='approved' && payState(d)==='paid' && inRange(paidOn(d),r);
     });
     var byEvent={};
     exps.forEach(function(d){ var k=d.eventId||''; (byEvent[k]=byEvent[k]||[]).push(d); });
@@ -2521,17 +2547,17 @@
     L.push(row(['마이티블레싱 손익 보고서', D.r.label]));
     L.push(row(['기간', D.r.from, '~', D.r.to]));
     L.push('');
-    L.push(row(['행사','일자','수입','운영비·세금','사례비','지출결의서','잔액']));
+    L.push(row(['행사','행사일','사례비 이체일','수입','운영비·세금','사례비','지출결의서','잔액']));
     D.rows.forEach(function(x){
-      L.push(row([x.e.name||'', x.e.date||'', x.direct?'':x.rev, x.direct?'':x.cost, x.fee, x.own, x.bal]));
+      L.push(row([x.e.name||'', x.e.date||'', x.fee?evPaidOn(x.e):'', x.direct?'':x.rev, x.direct?'':x.cost, x.fee, x.own, x.bal]));
     });
-    L.push(row(['합계','',D.income,D.cost,D.fee,D.own,D.profit+D.looseTotal]));
+    L.push(row(['합계','','',D.income,D.cost,D.fee,D.own,D.profit+D.looseTotal]));
     L.push('');
     L.push(row(['지급된 지출결의서']));
     L.push(row(['지급일','문서번호','제목','행사','계정과목','지급수단','받는 사람','금액']));
     D.exps.forEach(function(d){
       var ev=d.eventId&&S.events[d.eventId];
-      L.push(row([String((d.pay||{}).at||'').slice(0,10), d.no||'', d.title||'', ev?(ev.name||''):'',
+      L.push(row([paidOn(d), d.no||'', d.title||'', ev?(ev.name||''):'',
                   d.account||'', METHODS[d.method]||'', d.payee||'', expTotal(d)]));
     });
     L.push('');
@@ -2828,7 +2854,13 @@
       if((el=t.closest('[data-evyes]'))) return removeEvidence(+el.dataset.evyes);
       if(t.id==='eiAdd'){ dc.items=(dc.items||[]).concat([{name:'',qty:1,price:0,note:''}]); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-eidel]'))){ dc.items.splice(+el.dataset.eidel,1); touch('doc',dc.id); render(); return; }
-      if(t.id==='payGo'){ var pm=$('#payMemo'); S.payMemo=pm?pm.value:''; S.confirmPay=dc.id; render(); return; }
+      if(t.id==='payGo'){
+        var pm=$('#payMemo'), po=$('#payOn');
+        S.payMemo=pm?pm.value:'';
+        S.payOn=(po&&po.value)||today();
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(S.payOn)) return errbar('이체일을 넣어주세요');
+        S.confirmPay=dc.id; render(); return;
+      }
       if(t.id==='payNo'){ S.confirmPay=null; render(); return; }
       if(t.id==='payYes') return payExpense(dc);
       if((el=t.closest('[data-dact]'))){
@@ -2881,6 +2913,8 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='evPayOn'){ S.payOn=t.value; return; }
+    if(t.id==='payOn'){ S.payOn=t.value; return; }
     var ev=S.sel&&S.events[S.sel]; if(!ev)return;
     if(t.dataset&&t.dataset.f!==undefined){
       var i=+t.dataset.i,fl=t.dataset.f;
@@ -2970,6 +3004,7 @@
     if(t.id==='repM'){ S.rep.seg=t.value||'all'; render(); return; }
     if(t.id==='repNet'){ S.repNet=t.checked; render(); return; }
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
+    if(t.id==='evPayOn'){ S.payOn=t.value; return; }
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
   });
 
@@ -3062,7 +3097,15 @@
   function settleAct(ev,kind){
     if(!S.db||!S.me.id)return;
     if(kind==='submit'){ev.status='submitted';return writeStatus(ev,'submit');}
-    if(kind==='paid'){ev.status='paid';return writeStatus(ev,'paid');}
+    if(kind==='paid'){
+      var on=String(S.payOn||'').slice(0,10);
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('이체일을 넣어주세요');
+      ev.status='paid'; ev.paidOn=on;
+      S.db.doc('events/'+ev.id).update({status:'paid',paidOn:on,updatedAt:nowISO()})
+        .then(function(){ S.payOn=''; logApproval(ev,'paid'); flash(on+' 지급으로 기록했습니다'); render(); })
+        .catch(function(e){ errbar('처리 실패 '+(e&&e.code||'')); });
+      return;
+    }
     if(kind==='reject'){ev.status='draft';logApproval(ev,'reject');return writeStatus(ev,null);}
     logApproval(ev,kind);
   }
