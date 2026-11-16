@@ -1,0 +1,10 @@
+{
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "erp-mightyblessing.vercel.app" }],
+      "destination": "https://erp-mightyblessing-i7xj.vercel.app/:path*",
+      "permanent": false
+    }
+  ]
+}
