@@ -2772,7 +2772,7 @@
     var c=(e.code||'')+' '+(e.desc||'');
     if(/otp_expired|expired|invalid/i.test(c))
       return '로그인 링크가 만료됐거나 이미 한 번 쓰였습니다. 아래에서 다시 받아주세요.\n'+
-             '회사 메일 보안 검사가 링크를 먼저 열어보고 써버리는 일이 있습니다. 그럴 때는 메일에 적힌 6자리 숫자를 넣는 쪽이 확실합니다.';
+             '회사 메일 보안 검사가 링크를 먼저 열어보고 써버리는 일이 있습니다. 두 번 연속 이러면 알려주세요.';
     if(/access_denied/i.test(c)) return '로그인이 거절되었습니다. 아래에서 다시 받아주세요.';
     return decodeURIComponent(String(e.desc||e.code||'').replace(/\+/g,' '));
   }
@@ -2798,15 +2798,15 @@
     if(stage==='sent'){
       body='<p style="color:var(--muted);font-size:13px;margin:0 0 12px"><b>'+esc(mail)+'</b> 으로 보냈습니다.</p>'+
         note+
-        '<div class="note n-info" style="margin:0 0 14px">메일에 <b>링크</b>와 <b>6자리 숫자</b>가 같이 들어 있습니다.<br>'+
-          '링크를 눌러도 되고, 아래에 숫자를 넣어도 됩니다.</div>'+
-        '<div class="field"><label for="otpCode">6자리 숫자</label>'+
+        '<div class="note n-info" style="margin:0 0 14px">메일에 온 <b>로그인 링크</b>를 누르면 들어옵니다.</div>'+
+        '<p class="hint" style="margin:0 0 10px">링크가 안 열리거나 엉뚱한 브라우저에서 열렸나요? '+
+          '메일에 <b>6자리 숫자</b>가 같이 적혀 있으면 여기에 넣어도 됩니다.</p>'+
+        '<div class="field"><label for="otpCode">6자리 숫자 (있을 때만)</label>'+
           '<input id="otpCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="000000" '+
           'style="font-size:22px;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums"></div>'+
         '<div class="actions"><button class="btn primary" id="otpGo">들어가기</button>'+
           '<button class="btn" id="loginAgain">주소 바꾸기</button></div>'+
-        '<p class="hint" style="margin:12px 0 0">링크는 <b>누른 브라우저</b>에서만 로그인됩니다. '+
-          '메일 앱이 다른 브라우저를 열어버리면 숫자를 쓰세요. 메일이 안 보이면 스팸함도 확인해 주세요.</p>';
+        '<p class="hint" style="margin:12px 0 0">메일이 안 보이면 스팸함도 확인해 주세요.</p>';
     }else{
       body='<p style="color:var(--muted);font-size:13px;margin:0 0 6px">회사 이메일 주소를 넣으면 로그인 메일을 보내드립니다. 비밀번호는 없습니다.</p>'+
         '<p class="hint" style="margin:0 0 14px">한 번 들어오면 이 브라우저에서는 로그인 상태가 유지됩니다.</p>'+
