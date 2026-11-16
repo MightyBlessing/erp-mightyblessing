@@ -9,40 +9,54 @@
 <body>
 <title>마블 ERP</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
 <style>
   /* Layout: fixed left rail + content column; rail becomes a scrolling top bar on phones */
+  /* 색과 글꼴은 크쇼·포도나무·라이브텍스트와 같은 언어를 쓴다.
+     Pretendard, 먹색 잉크, 아주 밝은 종이, 둥근 모서리, 옅은 그림자.
+     강조색은 로고의 보라다. */
   :root{
-    --paper:#F4F6F8; --card:#FFFFFF; --ink:#14171C; --muted:#5B6370; --faint:#8A929E;
-    --line:#E1E5EB; --accent:#1F6F4A; --accent-soft:#E8F2EC;
-    --warn:#A8600C; --warn-soft:#FBF0DF; --bad:#A33B33; --bad-soft:#FBECEA;
-    --info:#2B5E93; --info-soft:#E7EFF7; --seal:#C0392B;
-    --zero:#9AA2AE; --rail:#101418; --rail-ink:#C7CED8; --rail-on:#FFFFFF;
-    --font-body:'Noto Sans KR', system-ui, sans-serif;
-    --font-num:'Space Grotesk','Noto Sans KR', system-ui, sans-serif;
+    --paper:#F7F7FA; --card:#FFFFFF; --ink:#12121A; --muted:#676573; --faint:#9A97A6;
+    --line:#E9E8EF; --accent:#7A00FF; --accent-soft:#F3EAFF; --accent-ink:#5E00C4;
+    --warn:#9A5B00; --warn-soft:#FFF3E0; --bad:#D1403A; --bad-soft:#FFECEA;
+    --info:#2A5BD7; --info-soft:#EDF2FF; --seal:#C0392B;
+    --zero:#A8A5B4; --rail:#12121A; --rail-ink:#A6A3B4; --rail-on:#FFFFFF;
+    --rail-hover:#1E1D2A; --rail-active:#2A2838;
+    --shadow:0 1px 2px rgba(18,18,26,.05), 0 10px 28px rgba(18,18,26,.055);
+    --shadow-sm:0 1px 2px rgba(18,18,26,.05), 0 4px 12px rgba(18,18,26,.045);
+    --r-card:14px; --r-ctl:10px;
+    --font-body:'Pretendard Variable', Pretendard, -apple-system, system-ui, 'Apple SD Gothic Neo', sans-serif;
+    --font-num:var(--font-body);
   }
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
-      --paper:#0F1216; --card:#171B21; --ink:#E8EBF0; --muted:#98A1AD; --faint:#79828F;
-      --line:#262C35; --accent:#4BA377; --accent-soft:#17291F;
-      --warn:#D79A42; --warn-soft:#2A2113; --bad:#E0796E; --bad-soft:#2B1816;
-      --info:#7FB0DE; --info-soft:#13202C; --seal:#E0796E;
-      --zero:#6B7480; --rail:#080A0D; --rail-ink:#8F98A5; --rail-on:#FFFFFF;
+      --paper:#0D0D12; --card:#17171F; --ink:#ECEBF2; --muted:#9C99AB; --faint:#7D7A8B;
+      --line:#262533; --accent:#A866FF; --accent-soft:#1F1630; --accent-ink:#C79BFF;
+      --warn:#E0A355; --warn-soft:#2B2113; --bad:#F0837B; --bad-soft:#2E1818;
+      --info:#89ADFF; --info-soft:#141A2B; --seal:#E0796E;
+      --zero:#6E6B7C; --rail:#08080C; --rail-ink:#93909F; --rail-on:#FFFFFF;
+      --rail-hover:#17161F; --rail-active:#242232;
+      --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+      --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.3);
       color-scheme:dark;
     }
   }
   :root[data-theme="dark"]{
-    --paper:#0F1216; --card:#171B21; --ink:#E8EBF0; --muted:#98A1AD; --faint:#79828F;
-    --line:#262C35; --accent:#4BA377; --accent-soft:#17291F;
-    --warn:#D79A42; --warn-soft:#2A2113; --bad:#E0796E; --bad-soft:#2B1816;
-    --info:#7FB0DE; --info-soft:#13202C; --seal:#E0796E;
-    --zero:#6B7480; --rail:#080A0D; --rail-ink:#8F98A5; --rail-on:#FFFFFF;
+    --paper:#0D0D12; --card:#17171F; --ink:#ECEBF2; --muted:#9C99AB; --faint:#7D7A8B;
+    --line:#262533; --accent:#A866FF; --accent-soft:#1F1630; --accent-ink:#C79BFF;
+    --warn:#E0A355; --warn-soft:#2B2113; --bad:#F0837B; --bad-soft:#2E1818;
+    --info:#89ADFF; --info-soft:#141A2B; --seal:#E0796E;
+    --zero:#6E6B7C; --rail:#08080C; --rail-ink:#93909F; --rail-on:#FFFFFF;
+    --rail-hover:#17161F; --rail-active:#242232;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px rgba(0,0,0,.35);
+    --shadow-sm:0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.3);
     color-scheme:dark;
   }
 
   *{box-sizing:border-box}
   body{background:var(--paper); color:var(--ink); font-family:var(--font-body);
-    font-size:14px; line-height:1.6; margin:0; padding:0}
+    font-size:14.5px; line-height:1.62; margin:0; padding:0;
+    -webkit-font-smoothing:antialiased; letter-spacing:-.011em}
   body::before{content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:30; background:var(--rail)}
 
   .shell{display:grid; grid-template-columns:224px minmax(0,1fr); min-height:100%}
@@ -50,19 +64,23 @@
 
   /* ---- rail ---- */
   .rail{background:var(--rail); color:var(--rail-ink); position:sticky; top:0; align-self:start;
-    height:100vh; display:flex; flex-direction:column;
+    height:100vh; display:flex; flex-direction:column; border-right:1px solid var(--line);
     padding-top:env(safe-area-inset-top,0px); padding-left:env(safe-area-inset-left,0px)}
   .rail .logo{padding:18px 18px 14px; color:#fff; font-weight:700; font-size:15px; letter-spacing:-.01em}
   .rail .logo small{display:block; font-weight:400; font-size:11px; color:var(--rail-ink); letter-spacing:.06em; margin-top:2px}
   .rail nav{display:flex; flex-direction:column; gap:2px; padding:4px 10px; overflow-y:auto}
   .rail button{display:flex; align-items:center; gap:9px; border:0; background:transparent; color:var(--rail-ink);
-    font-family:inherit; font-size:13.5px; text-align:left; padding:9px 11px; border-radius:7px; cursor:pointer; width:100%}
-  .rail button:hover{background:#1B222B; color:#fff}
-  .rail button[aria-current=true]{background:#232C37; color:var(--rail-on); font-weight:700}
-  .rail .ic{width:16px; text-align:center; flex:0 0 auto; opacity:.9}
+    font-family:inherit; font-size:13.5px; font-weight:500; letter-spacing:-.01em;
+    text-align:left; padding:9px 11px; border-radius:9px; cursor:pointer; width:100%;
+    transition:background .12s ease, color .12s ease}
+  .rail button:hover{background:var(--rail-hover); color:#fff}
+  .rail button[aria-current=true]{background:var(--rail-active); color:var(--rail-on); font-weight:700}
+  .rail .ic{width:17px; height:17px; flex:0 0 auto; opacity:.8; display:grid; place-items:center}
+  .rail .ic svg{width:17px; height:17px; display:block}
+  .rail button:hover .ic,.rail button[aria-current=true] .ic{opacity:1}
   .rail .badge{margin-left:auto; background:var(--bad); color:#fff; font-size:10.5px; font-weight:700;
     border-radius:999px; padding:1px 6px; font-family:var(--font-num)}
-  .rail .foot{margin-top:auto; padding:14px 18px; border-top:1px solid #1E252E; font-size:11.5px; color:#6E7784}
+  .rail .foot{margin-top:auto; padding:14px 18px; border-top:1px solid var(--rail-hover); font-size:11.5px; color:#6B6878}
   @media (max-width:900px){
     .rail{height:auto; position:sticky; top:0; z-index:20}
     .rail .logo{padding:12px 16px 8px}
@@ -73,72 +91,91 @@
 
   /* ---- content ---- */
   .main{min-width:0; display:flex; flex-direction:column}
-  .bar{position:sticky; top:0; z-index:15; background:var(--paper); border-bottom:1px solid var(--line);
+  .bar{position:sticky; top:0; z-index:15; background:color-mix(in srgb, var(--paper) 82%, transparent);
+    -webkit-backdrop-filter:saturate(1.6) blur(12px); backdrop-filter:saturate(1.6) blur(12px);
+    border-bottom:1px solid var(--line);
     display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-    padding:12px max(16px, env(safe-area-inset-right,0px)) 12px 20px}
+    padding:13px max(16px, env(safe-area-inset-right,0px)) 13px 22px}
   @media (max-width:900px){ .bar{top:0; position:static} }
-  .bar h1{font-size:17px; font-weight:700; margin:0; letter-spacing:-.01em}
+  .bar h1{font-size:19px; font-weight:700; margin:0; letter-spacing:-.03em}
   .bar .who{margin-left:auto; display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted)}
   .bar .who img{width:24px; height:24px; border-radius:50%; display:block}
   .page{padding:20px; padding-left:max(20px, env(safe-area-inset-left,0px));
     padding-right:max(20px, env(safe-area-inset-right,0px)); padding-bottom:64px}
 
-  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px}
-  .card h2{font-size:12px; font-weight:700; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin:0 0 12px}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:var(--r-card);
+    padding:18px; box-shadow:var(--shadow-sm)}
+  /* 한글에 대문자 변환은 아무 일도 하지 않는다. 자간만 벌어져 읽기 나빠진다. */
+  .card h2{font-size:13px; font-weight:700; letter-spacing:-.015em; color:var(--ink); margin:0 0 13px}
   .stack{display:flex; flex-direction:column; gap:16px}
   .cols{display:grid; grid-template-columns:minmax(0,330px) minmax(0,1fr); gap:16px; align-items:start}
   @media (max-width:980px){ .cols{grid-template-columns:minmax(0,1fr)} }
   .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px}
-  .tile{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px}
-  .tile .k{font-size:11.5px; color:var(--muted); font-weight:500}
-  .tile .v{font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:23px; font-weight:700; margin-top:3px}
-  .tile .s{font-size:11.5px; color:var(--faint); margin-top:1px}
+  .tile{background:var(--card); border:1px solid var(--line); border-radius:var(--r-card);
+    padding:16px 18px; box-shadow:var(--shadow-sm)}
+  .tile .k{font-size:12px; color:var(--muted); font-weight:500}
+  .tile .v{font-family:var(--font-num); font-variant-numeric:tabular-nums; font-size:26px;
+    font-weight:700; letter-spacing:-.035em; margin-top:4px}
+  .tile .s{font-size:11.5px; color:var(--faint); margin-top:2px}
   .tile.hot .v{color:var(--bad)}
 
   .field{display:flex; flex-direction:column; gap:5px; margin-bottom:11px}
   .field label{font-size:12px; color:var(--muted); font-weight:500}
   input,select,textarea{font-family:inherit; font-size:14px; color:var(--ink); background:var(--paper);
-    border:1px solid var(--line); border-radius:6px; padding:7px 9px; width:100%}
+    border:1px solid var(--line); border-radius:var(--r-ctl); padding:9px 11px; width:100%;
+    transition:border-color .12s ease, box-shadow .12s ease}
+  input:hover:not(:disabled),select:hover:not(:disabled),textarea:hover:not(:disabled){border-color:var(--faint)}
+  input:focus,select:focus,textarea:focus{outline:0; border-color:var(--accent);
+    box-shadow:0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent)}
   textarea{resize:vertical}
   input[type=number]{font-family:var(--font-num); font-variant-numeric:tabular-nums}
   input:disabled,select:disabled,textarea:disabled{opacity:.6; cursor:not-allowed}
-  :focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
   .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .hint{font-size:11.5px; color:var(--muted); margin:-5px 0 11px}
 
   .seg{display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden}
   .seg button{flex:1; border:0; background:var(--paper); color:var(--muted); font-family:inherit;
     font-size:12.5px; padding:7px 4px; cursor:pointer}
-  .seg button[aria-pressed=true]{background:var(--accent-soft); color:var(--accent); font-weight:700}
+  .seg button[aria-pressed=true]{background:var(--accent-soft); color:var(--accent-ink); font-weight:700}
 
   .tabs{display:flex; gap:3px; flex-wrap:wrap; margin-bottom:14px}
   .tabs button{border:1px solid transparent; background:transparent; color:var(--muted); font-family:inherit;
-    font-size:13px; padding:6px 11px; border-radius:7px; cursor:pointer}
-  .tabs button[aria-pressed=true]{background:var(--card); border-color:var(--line); color:var(--ink); font-weight:700}
+    font-size:13.5px; font-weight:500; padding:7px 13px; border-radius:999px; cursor:pointer;
+    transition:background .12s ease, color .12s ease}
+  .tabs button:hover{background:var(--card); color:var(--ink)}
+  .tabs button[aria-pressed=true]{background:var(--accent-soft); border-color:transparent;
+    color:var(--accent-ink); font-weight:700}
   .tabs .n{font-family:var(--font-num); font-size:11.5px; opacity:.75; margin-left:4px}
 
   .btn{border:1px solid var(--line); background:var(--card); color:var(--ink); font-family:inherit;
-    font-size:13px; font-weight:500; padding:8px 14px; border-radius:6px; cursor:pointer}
-  .btn:hover:not(:disabled){border-color:var(--accent)}
-  .btn:disabled{opacity:.45; cursor:not-allowed}
-  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff}
-  .btn.danger{color:var(--bad); border-color:var(--bad)}
-  .btn.sm{padding:5px 10px; font-size:12.5px}
+    font-size:13.5px; font-weight:600; letter-spacing:-.015em; padding:9px 16px;
+    border-radius:var(--r-ctl); cursor:pointer; box-shadow:var(--shadow-sm);
+    transition:border-color .12s ease, transform .12s ease, box-shadow .12s ease, background .12s ease}
+  .btn:hover:not(:disabled){border-color:var(--faint); transform:translateY(-1px); box-shadow:var(--shadow)}
+  .btn:active:not(:disabled){transform:translateY(0)}
+  .btn:disabled{opacity:.45; cursor:not-allowed; box-shadow:none}
+  .btn.primary{background:var(--accent); border-color:var(--accent); color:#fff;
+    box-shadow:0 1px 2px rgba(18,18,26,.1), 0 8px 20px color-mix(in srgb, var(--accent) 26%, transparent)}
+  .btn.primary:hover:not(:disabled){border-color:var(--accent); filter:brightness(1.07)}
+  .btn.danger{color:var(--bad); border-color:color-mix(in srgb, var(--bad) 40%, var(--line))}
+  .btn.danger:hover:not(:disabled){border-color:var(--bad); background:var(--bad-soft)}
+  .btn.sm{padding:6px 12px; font-size:12.5px}
   .actions{display:flex; flex-wrap:wrap; gap:8px}
 
   .pill{display:inline-flex; align-items:center; font-size:11.5px; font-weight:700; padding:3px 9px; border-radius:999px; white-space:nowrap}
   .p-draft{background:var(--paper); color:var(--muted); border:1px solid var(--line)}
   .p-submitted,.p-pending{background:var(--warn-soft); color:var(--warn)}
   .p-progress{background:var(--info-soft); color:var(--info)}
-  .p-approved{background:var(--accent-soft); color:var(--accent)}
+  .p-approved{background:var(--accent-soft); color:var(--accent-ink)}
   .p-paid{background:var(--accent); color:#fff}
   .p-rejected{background:var(--bad-soft); color:var(--bad)}
   .p-canceled{background:var(--paper); color:var(--zero); border:1px solid var(--line)}
 
   table{width:100%; border-collapse:collapse; font-size:13px}
-  th{font-size:11px; letter-spacing:.04em; color:var(--muted); font-weight:700; text-align:left;
-    padding:8px; border-bottom:1px solid var(--line); white-space:nowrap}
-  td{padding:8px; border-bottom:1px solid var(--line); vertical-align:top}
+  th{font-size:12px; letter-spacing:-.01em; color:var(--muted); font-weight:600; text-align:left;
+    padding:9px 10px; border-bottom:1px solid var(--line); white-space:nowrap}
+  td{padding:10px; border-bottom:1px solid var(--line); vertical-align:top}
   td.num,th.num{text-align:right; font-family:var(--font-num); font-variant-numeric:tabular-nums; white-space:nowrap}
   tr.off td{color:var(--zero)}
   .pay{font-weight:700}
@@ -147,12 +184,14 @@
   tfoot td{border-top:2px solid var(--ink); border-bottom:0; padding-top:9px; font-weight:700}
   .rowlink{cursor:pointer}
   .rowlink:hover td{background:var(--accent-soft)}
+  .rowlink:hover td:first-child{border-top-left-radius:8px; border-bottom-left-radius:8px}
+  .rowlink:hover td:last-child{border-top-right-radius:8px; border-bottom-right-radius:8px}
   .desc{min-width:180px; font-size:12.5px; color:var(--muted); line-height:1.45}
   .ptsel{width:60px; padding:4px 6px; font-size:12px}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
 
-  .chain,.base{border-radius:8px; padding:12px 14px; font-family:var(--font-num);
+  .chain,.base{border-radius:12px; padding:13px 15px; font-family:var(--font-num);
     font-variant-numeric:tabular-nums; font-size:13px}
   .chain{background:var(--paper); border:1px solid var(--line)}
   .base{background:var(--accent-soft); margin-top:14px}
@@ -161,13 +200,13 @@
   .tot{border-top:1px solid var(--line); margin-top:6px; padding-top:7px; font-weight:700}
   .fin{border-top:1px solid var(--accent); margin-top:6px; padding-top:7px; font-weight:700; color:var(--accent)}
 
-  .note{display:block; border-radius:8px; padding:10px 12px; font-size:12.5px; line-height:1.5; margin-top:12px}
+  .note{display:block; border-radius:12px; padding:11px 14px; font-size:13px; line-height:1.55; margin-top:12px}
   .n-warn{background:var(--warn-soft); color:var(--warn)}
   .n-bad{background:var(--bad-soft); color:var(--bad)}
   .n-info{background:var(--card); color:var(--muted); border:1px solid var(--line)}
 
   .steps{display:flex; flex-direction:column; gap:9px}
-  .step{display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border:1px solid var(--line); border-radius:8px}
+  .step{display:flex; gap:10px; align-items:flex-start; padding:11px 13px; border:1px solid var(--line); border-radius:12px}
   .step.done{background:var(--accent-soft); border-color:var(--accent-soft)}
   .step.now{border-color:var(--warn); background:var(--warn-soft)}
   .step.bad{border-color:var(--bad); background:var(--bad-soft)}
@@ -180,13 +219,13 @@
   .step .m{font-size:12px; color:var(--muted); line-height:1.5}
 
   .people{display:flex; flex-direction:column; gap:8px}
-  .person{display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid var(--line); border-radius:8px}
+  .person{display:flex; align-items:center; gap:10px; padding:9px 11px; border:1px solid var(--line); border-radius:12px}
   .person img{width:26px; height:26px; border-radius:50%; display:block; flex:0 0 auto}
   .person .nm{flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
   .person select{width:auto; min-width:116px; font-size:12.5px; padding:5px 8px}
 
   .empty{text-align:center; padding:40px 16px; color:var(--muted)}
-  .empty strong{display:block; color:var(--ink); font-size:15px; margin-bottom:6px}
+  .empty strong{display:block; color:var(--ink); font-size:15.5px; font-weight:700; letter-spacing:-.02em; margin-bottom:6px}
 
   /* ---- 공문 미리보기 ---- */
   .doc{background:#fff; color:#15171a; border:1px solid var(--line); border-radius:8px; padding:30px 28px;
@@ -285,7 +324,19 @@
   var ROLE_LABEL={accounting:'회계',ceo:'대표',member:'팀원'};
   var SET_STATUS={draft:'작성중',submitted:'결재중',approved:'승인완료',paid:'지급완료'};
   var DOC_STATUS={draft:'작성중',submitted:'결재대기',progress:'승인진행중',approved:'승인완료',rejected:'반려',canceled:'취소'};
-  var NAV=[{k:'dash',t:'대시보드',i:'▦'},{k:'docs',t:'전자결재',i:'✎'},{k:'acct',t:'회계',i:'▤'},{k:'settle',t:'정산',i:'₩'},{k:'roles',t:'역할',i:'⚙'}];
+  /* 글리프(▦ ✎ ₩)는 글꼴마다 모양과 크기가 달라 줄이 안 맞는다. 선 아이콘으로 둔다. */
+  function ic(d){
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" '+
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>';
+  }
+  var ICON={
+    dash:  ic('<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>'),
+    docs:  ic('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>'),
+    acct:  ic('<rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 14.5h4"/>'),
+    settle:ic('<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l3.5 5 3.5-5"/><path d="M8.6 12.6h6.8M8.6 15h6.8"/>'),
+    roles: ic('<circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.2a5.8 5.8 0 0 1 11.2 0"/><path d="M16.5 6.4a3 3 0 0 1 0 5.9"/><path d="M18 19.2a5.3 5.3 0 0 0-1.7-3.9"/>')
+  };
+  var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계'},{k:'settle',t:'정산'},{k:'roles',t:'역할'}];
   var DOC_KIND={official:'공문',expense:'지출결의서'};
   var SCOPE={out:'대외용',in:'대내용'};
   /* 로고는 저장소에 같이 둔다. 공용 자산이라 사람마다 올릴 이유가 없다.
@@ -528,7 +579,7 @@
     var n=$('#nav'); if(!n)return;
     n.innerHTML=NAV.map(function(x){
       return '<button type="button" data-nav="'+x.k+'" aria-current="'+(S.view===x.k?'true':'false')+'">'+
-        '<span class="ic">'+x.i+'</span>'+x.t+
+        '<span class="ic">'+(ICON[x.k]||'')+'</span>'+x.t+
         (x.k==='docs'&&todo?'<span class="badge">'+todo+'</span>':'')+'</button>';
     }).join('');
     var lg=$('.rail .logo');
