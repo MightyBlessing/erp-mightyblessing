@@ -252,7 +252,7 @@
   <aside class="rail">
     <div class="logo">마블 ERP<small>MIGHTY BLESSING</small></div>
     <nav id="nav"></nav>
-    <div class="foot">정산 · 전자결재<br>회계 모듈은 다음 단계</div>
+    <div class="foot">정산 · 전자결재 · 회계<br>마이티블레싱</div>
   </aside>
   <div class="main">
     <div class="bar"><h1 id="ptitle">마블 ERP</h1><span class="who" id="who"></span></div>
@@ -277,7 +277,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -495,6 +495,12 @@
         tile('진행 중 문서', prog.length+'건', '결재 중')+
         tile('지급 완료 사례비', won(totalPay), paid.length+'개 행사 누계')+
         tile('정산 진행 중', inflight.length+'건', '결재 대기')+
+        (function(){
+          var xs=Object.keys(S.docs).map(function(k){return S.docs[k];})
+            .filter(function(d){return d&&d.type==='expense'&&docStatus(d)==='approved'&&payState(d)==='pending';});
+          var v=xs.reduce(function(a,d){return a+expTotal(d);},0);
+          return tile('지급 대기 지출', won(v), xs.length+'건 · 승인 후 미지급', xs.length>0);
+        })()+
       '</div>'+
       '<div class="cols">'+
         '<section class="card"><h2>내 결재 대기</h2>'+
@@ -526,28 +532,169 @@
     var tabs=[['mine','내 문서'],['todo','결재할 문서'],['progress','진행 중'],['approved','승인 완료'],['rejected','반려'],['all','전체']];
     var list=docList(S.docTab);
     app.innerHTML=
-      '<div class="actions" style="margin-bottom:14px"><button class="btn primary" id="newDoc"'+(writable()?'':' disabled')+'>+ 공문 작성</button></div>'+
+      '<div class="actions" style="margin-bottom:14px">'+
+        '<button class="btn primary" id="newDoc"'+(writable()?'':' disabled')+'>+ 공문 작성</button>'+
+        '<button class="btn primary" id="newExp"'+(writable()?'':' disabled')+'>+ 지출결의서</button></div>'+
       '<div class="tabs">'+tabs.map(function(t){
         var n=docList(t[0]).length;
         return '<button type="button" data-dtab="'+t[0]+'" aria-pressed="'+(S.docTab===t[0]?'true':'false')+'">'+t[1]+'<span class="n">'+n+'</span></button>';
       }).join('')+'</div>'+
       '<div class="card">'+(list.length?
-        '<div class="scroll"><table><thead><tr><th>제목</th><th>문서번호</th><th>수신</th><th>상태</th><th>결재선</th><th class="num">수정</th></tr></thead><tbody>'+
+        '<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>문서번호</th><th>수신 / 금액</th><th>상태</th><th>결재선</th><th class="num">수정</th></tr></thead><tbody>'+
         list.map(function(d){
-          var st=docStatus(d);
+          var st=docStatus(d), isX=d.type==='expense';
           return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
-            '<td><b>'+esc(d.title||'(제목 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(d.subject||'')+'</div></td>'+
+            '<td style="color:var(--muted);font-size:12px;white-space:nowrap">'+(DOC_KIND[d.type]||'공문')+'</td>'+
+            '<td><b>'+esc(d.title||'(제목 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(isX?(d.payee||''):(d.subject||''))+'</div></td>'+
             '<td style="color:var(--muted);font-size:12px">'+esc(d.no||'')+'</td>'+
-            '<td>'+esc(d.to||'—')+'</td>'+
+            '<td'+(isX?' class="num"':'')+'>'+(isX?won(expTotal(d)):esc(d.to||'—'))+'</td>'+
             '<td><span class="pill p-'+st+'">'+DOC_STATUS[st]+'</span></td>'+
             '<td style="font-size:12px;color:var(--muted)">'+(d.steps&&d.steps.length?d.steps.map(function(s){return nameOf(s.uid)+(s.state==='approved'?' ✓':s.state==='rejected'?' ✕':'');}).join(' → '):'미지정')+'</td>'+
             '<td class="num" style="color:var(--muted)">'+esc(shortTime(d.updatedAt))+'</td></tr>';
         }).join('')+'</tbody></table></div>'
-        :'<div class="empty"><strong>문서가 없습니다</strong>+ 공문 작성을 눌러 시작하세요.</div>')+'</div>';
+        :'<div class="empty"><strong>문서가 없습니다</strong>위 버튼으로 새 문서를 시작하세요.</div>')+'</div>';
+  }
+
+  /* ---- 지출결의서 ---- */
+  function renderExpense(d){
+    var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var dis=editable?'':' disabled';
+    var mine=isMyTurn(d), total=expTotal(d), ps=payState(d);
+    var canPay=writable()&&st==='approved'&&ps==='pending'&&(myRole()==='accounting'||S.me.canEdit);
+
+    var rows=(d.items||[]).map(function(it,i){
+      return '<tr>'+
+        '<td><input data-ei="'+i+'" data-ef="name" value="'+esc(it.name)+'"'+dis+' placeholder="항목"></td>'+
+        '<td style="width:72px"><input data-ei="'+i+'" data-ef="qty" type="number" min="0" value="'+esc(it.qty)+'"'+dis+'></td>'+
+        '<td style="width:116px"><input data-ei="'+i+'" data-ef="price" type="number" min="0" value="'+esc(it.price)+'"'+dis+'></td>'+
+        '<td class="num" style="width:106px;font-family:var(--font-num)">'+won(num(it.qty,0)*num(it.price,0))+'</td>'+
+        '<td><input data-ei="'+i+'" data-ef="note" value="'+esc(it.note||'')+'"'+dis+' placeholder="비고"></td>'+
+        (editable?'<td style="width:32px"><button class="del" data-eidel="'+i+'" aria-label="항목 삭제">×</button></td>':'')+
+      '</tr>';
+    }).join('');
+
+    var lineUI=(d.steps||[]).map(function(x,i){
+      var tag=x.state==='approved'?'<span class="pill p-approved">승인</span>':x.state==='rejected'?'<span class="pill p-rejected">반려</span>':'<span class="pill p-pending">대기</span>';
+      return '<div class="person"><span style="font-family:var(--font-num);color:var(--muted);width:14px">'+(i+1)+'</span>'+
+        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+tag+
+        (editable?'<button class="del" data-lndel="'+i+'" aria-label="결재자 제거">×</button>':'')+'</div>';
+    }).join('');
+
+    var acts=[];
+    if(editable&&(d.steps||[]).length) acts.push('<button class="btn primary" data-dact="submit">결재 올리기</button>');
+    if(mine){ acts.push('<button class="btn primary" data-dact="approve">승인</button>');
+              acts.push('<button class="btn danger" data-dact="reject">반려</button>'); }
+    if(writable()&&st!=='draft'&&d.drafter===S.me.id&&st!=='approved') acts.push('<button class="btn" data-dact="cancel">취소</button>');
+    if(writable()&&(st==='rejected'||st==='canceled')&&d.drafter===S.me.id) acts.push('<button class="btn" data-dact="reopen">다시 작성</button>');
+    if(st==='approved') acts.push('<button class="btn primary" data-dact="pdf">PDF로 내보내기</button>');
+
+    var payBlock;
+    if(st!=='approved'){
+      payBlock='<div class="empty" style="padding:20px 8px">결재가 끝나면 지급 처리를 할 수 있습니다.</div>';
+    }else if(ps==='paid'){
+      payBlock='<div class="note n-ok" style="margin:0"><b>지급 완료</b> · '+esc(shortTime((d.pay||{}).at))+' · 처리 '+esc(nameOf((d.pay||{}).by))+
+        ((d.pay||{}).memo?'<br>'+esc(d.pay.memo):'')+'</div>';
+    }else if(canPay){
+      payBlock='<div class="note n-warn" style="margin:0 0 12px">승인되었습니다. <b>실제로 송금한 뒤에</b> 아래를 눌러주세요. 한 번 기록하면 되돌릴 수 없습니다.</div>'+
+        '<div class="field"><label for="payMemo">지급 메모 (선택)</label><input id="payMemo" placeholder="예: 11/16 국민은행 이체" value="'+esc(S.payMemo||'')+'"></div>'+
+        '<div class="actions">'+(S.confirmPay===d.id
+          ? '<span style="color:var(--bad);font-size:12.5px;align-self:center">'+won(total)+' 지급 완료로 기록합니다</span>'+
+            '<button class="btn danger sm" id="payYes">확인</button><button class="btn sm" id="payNo">취소</button>'
+          : '<button class="btn primary" id="payGo">지급 완료 처리</button>')+'</div>';
+    }else{
+      payBlock='<div class="note n-info" style="margin:0">승인되었습니다. 지급 처리는 <b>회계 역할</b>을 가진 사람이 합니다.</div>';
+    }
+
+    var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
+      ? (S.confirmDocDel===d.id
+        ? '<div class="actions"><span style="color:var(--bad);font-size:12.5px;align-self:center">되돌릴 수 없습니다</span><button class="btn danger sm" id="docDelYes">삭제</button><button class="btn sm" id="docDelNo">취소</button></div>'
+        : '<button class="btn danger sm" id="docDel">문서 삭제</button>') : '';
+
+    var evOpts='<option value="">(지정 안 함)</option>'+Object.keys(S.events).map(function(k){
+      return '<option value="'+esc(k)+'"'+(d.eventId===k?' selected':'')+'>'+esc(S.events[k].name||'(이름 없음)')+'</option>';}).join('');
+
+    app.innerHTML=
+      '<div class="actions" style="margin-bottom:14px"><button class="btn sm" id="dback">← 문서함</button>'+
+        '<span class="pill p-'+st+'" style="align-self:center">'+DOC_STATUS[st]+'</span>'+
+        (st==='approved'?'<span class="pill p-'+(ps==='paid'?'approved':'pending')+'" style="align-self:center">'+PAY_LABEL[ps]+'</span>':'')+
+        '<span style="flex:1"></span>'+delCtl+'</div>'+
+      (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
+      '<div class="cols"><div class="stack">'+
+        '<section class="card"><h2>문서 정보</h2>'+
+          fld('text','xTitle','제목',d.title,dis)+
+          '<div class="row2">'+fld('text','xNo','문서번호',d.no,dis)+fld('text','xDate','기안일자',d.date,dis)+'</div>'+
+          '<div class="field"><label for="xEvent">행사 / 사업</label><select id="xEvent"'+dis+'>'+evOpts+'</select></div>'+
+          '<div class="row2">'+
+            '<div class="field"><label for="xAccount">계정과목</label><select id="xAccount"'+dis+'>'+
+              ACCOUNTS.map(function(a){return '<option'+(d.account===a?' selected':'')+'>'+esc(a)+'</option>';}).join('')+'</select></div>'+
+            '<div class="field"><label for="xMethod">지급 수단</label><select id="xMethod"'+dis+'>'+
+              Object.keys(METHODS).map(function(k){return '<option value="'+k+'"'+(d.method===k?' selected':'')+'>'+METHODS[k]+'</option>';}).join('')+'</select></div>'+
+          '</div>'+
+          fld('text','xDue','지급 희망일',d.dueDate,dis)+
+        '</section>'+
+        '<section class="card"><h2>받는 사람</h2>'+
+          fld('text','xPayee','성명 / 상호',d.payee,dis)+
+          '<div class="row2">'+fld('text','xBank','은행',d.payeeBank,dis)+fld('text','xAcct','계좌번호',d.payeeAcct,dis)+'</div>'+
+        '</section>'+
+        '<section class="card"><h2>결재선</h2>'+
+          (lineUI?'<div class="people">'+lineUI+'</div>':'<div class="empty" style="padding:18px 8px">결재자를 추가하세요.</div>')+
+          (editable?'<div class="field" style="margin-top:12px"><input id="lnSearch" placeholder="이름으로 검색해 결재자 추가" autocomplete="off"></div><div class="people" id="lnResults"></div>':'')+
+          '<p class="hint" style="margin-top:8px">위에서부터 순서대로 결재합니다.</p>'+
+        '</section>'+
+      '</div><div class="stack" style="min-width:0">'+
+        '<section class="card"><h2>지출 내역</h2>'+
+          '<div class="scroll"><table><thead><tr><th>항목</th><th class="num">수량</th><th class="num">단가</th><th class="num">금액</th><th>비고</th>'+(editable?'<th></th>':'')+'</tr></thead>'+
+          '<tbody>'+rows+'</tbody></table></div>'+
+          (editable?'<div class="actions" style="margin-top:10px"><button class="btn sm" id="eiAdd">+ 항목 추가</button></div>':'')+
+          '<div class="note n-info" style="margin:12px 0 0;display:flex;justify-content:space-between;align-items:baseline">'+
+            '<b>합계</b><b id="xTotal" style="font-family:var(--font-num);font-size:17px">'+won(total)+'</b></div>'+
+        '</section>'+
+        '<section class="card"><h2>지출 사유</h2>'+
+          '<textarea id="xNote" rows="3"'+dis+' placeholder="무엇을 위한 지출인지 적어주세요">'+esc(d.note||'')+'</textarea>'+
+        '</section>'+
+        '<section class="card"><h2>미리보기</h2>'+expensePreview(d)+'</section>'+
+        '<section class="card"><h2>결재</h2>'+docSteps(d)+
+          (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
+        '</section>'+
+        '<section class="card"><h2>지급</h2>'+payBlock+'</section>'+
+      '</div></div>';
+
+    if(editable){
+      var box=$('#lnSearch');
+      if(box){ box.addEventListener('focus',function(){lineSearch('');});
+               box.addEventListener('input',function(){lineSearch(box.value);}); }
+    }
+  }
+
+  function expensePreview(d){
+    var st=docStatus(d);
+    var rows=(d.items||[]).filter(function(it){return (it.name||'').trim()||num(it.price,0);}).map(function(it,i){
+      return '<tr><td class="num">'+(i+1)+'</td><td>'+esc(it.name)+'</td><td class="num">'+num(it.qty,0)+'</td>'+
+        '<td class="num">'+won(num(it.price,0))+'</td><td class="num">'+won(num(it.qty,0)*num(it.price,0))+'</td>'+
+        '<td>'+esc(it.note||'')+'</td></tr>';
+    }).join('');
+    var ev=d.eventId&&S.events[d.eventId];
+    return '<div class="doc">'+
+      '<div class="dhead"><span class="org">지 출 결 의 서</span><span class="mark">MIGHTY BLESSING</span></div><hr>'+
+      '<div class="to"><b>문서번호</b>'+esc(d.no||'—')+'</div>'+
+      '<div class="to"><b>기안일자</b>'+esc(d.date||'—')+'</div>'+
+      '<div class="to"><b>행　　사</b>'+esc(ev?(ev.name||''):'—')+'</div>'+
+      '<div class="to"><b>계정과목</b>'+esc(d.account||'—')+'</div>'+
+      '<div class="to"><b>지급수단</b>'+esc(METHODS[d.method]||'—')+'</div>'+
+      '<div class="to"><b>받는사람</b>'+esc(d.payee||'—')+(d.payeeBank?' ('+esc(d.payeeBank)+' '+esc(d.payeeAcct||'')+')':'')+'</div>'+
+      '<hr class="thin">'+
+      '<table class="ov" style="margin-top:14px"><thead><tr><th style="width:26px">№</th><th style="width:auto">항목</th><th style="width:42px">수량</th><th style="width:84px">단가</th><th style="width:94px">금액</th><th style="width:100px">비고</th></tr></thead>'+
+      '<tbody>'+(rows||'<tr><td colspan="6" style="text-align:center;color:#8a8f97">내역 없음</td></tr>')+'</tbody>'+
+      '<tfoot><tr><th colspan="4" style="text-align:right">합　계</th><th class="num" style="font-family:var(--font-num)">'+won(expTotal(d))+'</th><th></th></tr></tfoot></table>'+
+      (d.note?'<p style="margin:12px 0 0;white-space:pre-wrap">'+esc(d.note)+'</p>':'')+
+      '<div class="end" style="text-align:left;margin-top:14px">위와 같이 지출하고자 하오니 결재하여 주시기 바랍니다.</div>'+
+      '<div class="sign"><span class="nm">마이티블레싱대표'+(st==='approved'?sealMark(d):'')+'</span></div>'+
+    '</div>';
   }
 
   /* ---- 공문 작성/보기 ---- */
   function renderDoc(d){
+    if(d.type==='expense') return renderExpense(d);
     var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d);
@@ -833,6 +980,118 @@
   }
 
   /* ---- 역할 ---- */
+  /* ---- 회계 ---- */
+  function expenses(){
+    return Object.keys(S.docs).map(function(k){return S.docs[k];}).filter(function(d){return d&&d.type==='expense';});
+  }
+  function acctList(tab){
+    var all=expenses().filter(function(d){return docStatus(d)==='approved';});
+    if(tab==='pending') all=all.filter(function(d){return payState(d)==='pending';});
+    if(tab==='paid')    all=all.filter(function(d){return payState(d)==='paid';});
+    all.sort(function(a,b){
+      var ka=(payState(a)==='paid'?((a.pay||{}).at||''):(a.dueDate||a.date||''));
+      var kb=(payState(b)==='paid'?((b.pay||{}).at||''):(b.dueDate||b.date||''));
+      return kb<ka?-1:1;
+    });
+    return all;
+  }
+  function groupKey(d,by){
+    if(by==='account') return d.account||'기타';
+    if(by==='method')  return METHODS[d.method]||'기타';
+    var ev=d.eventId&&S.events[d.eventId];
+    return ev?(ev.name||'(이름 없음)'):'행사 미지정';
+  }
+
+  function renderAcct(){
+    var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
+    var pending=approved.filter(function(d){return payState(d)==='pending';});
+    var paid=approved.filter(function(d){return payState(d)==='paid';});
+    var inflight=expenses().filter(function(d){return ['submitted','progress'].indexOf(docStatus(d))>=0;});
+    var sum=function(a){return a.reduce(function(x,d){return x+expTotal(d);},0);};
+    var thisMonth=today().slice(0,7);
+    var mPaid=paid.filter(function(d){return String((d.pay||{}).at||'').slice(0,7)===thisMonth;});
+
+    var tabs=[['pending','지급 대기'],['paid','지급 완료'],['all','전체']];
+    var list=acctList(S.acctTab);
+
+    var g={}, order=[];
+    paid.forEach(function(d){
+      var k=groupKey(d,S.acctBy);
+      if(!g[k]){ g[k]={n:0,v:0}; order.push(k); }
+      g[k].n++; g[k].v+=expTotal(d);
+    });
+    order.sort(function(a,b){return g[b].v-g[a].v;});
+    var gmax=order.reduce(function(a,k){return Math.max(a,g[k].v);},0)||1;
+    var gtotal=order.reduce(function(a,k){return a+g[k].v;},0);
+
+    var byLabel={event:'행사 / 사업',account:'계정과목',method:'지급 수단'};
+
+    app.innerHTML=
+      '<div class="stack">'+
+      '<div class="tiles">'+
+        tile('지급 대기', won(sum(pending)), pending.length+'건 · 승인됨', pending.length>0)+
+        tile('이번 달 지급', won(sum(mPaid)), mPaid.length+'건')+
+        tile('지급 완료 누계', won(sum(paid)), paid.length+'건')+
+        tile('결재 중 지출', won(sum(inflight)), inflight.length+'건')+
+      '</div>'+
+
+      '<section class="card"><h2>'+byLabel[S.acctBy]+'별 지출</h2>'+
+        '<div class="tabs" style="margin:0 0 12px">'+
+          [['event','행사 / 사업'],['account','계정과목'],['method','지급 수단']].map(function(x){
+            return '<button type="button" data-aby="'+x[0]+'" aria-pressed="'+(S.acctBy===x[0]?'true':'false')+'">'+x[1]+'</button>';
+          }).join('')+'</div>'+
+        (order.length
+          ? '<div class="scroll"><table><thead><tr><th>'+byLabel[S.acctBy]+'</th><th class="num">건수</th><th class="num">금액</th><th style="width:34%">비중</th></tr></thead><tbody>'+
+            order.map(function(k){
+              var w=Math.max(2,Math.round(g[k].v/gmax*100));
+              return '<tr><td><b>'+esc(k)+'</b></td><td class="num">'+g[k].n+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(g[k].v)+'</td>'+
+                '<td><div style="height:9px;border-radius:5px;background:var(--line)">'+
+                  '<div style="height:9px;width:'+w+'%;border-radius:5px;background:var(--accent)"></div></div>'+
+                  '<span style="font-size:11px;color:var(--muted)">'+Math.round(g[k].v/(gtotal||1)*100)+'%</span></td></tr>';
+            }).join('')+
+            '<tr><th>합계</th><th class="num">'+paid.length+'</th><th class="num" style="font-family:var(--font-num)">'+won(gtotal)+'</th><th></th></tr>'+
+            '</tbody></table></div>'
+          : '<div class="empty" style="padding:24px 8px">지급 완료된 지출이 아직 없습니다.</div>')+
+        '<p class="hint" style="margin-top:10px">지급 완료된 건만 집계합니다. 승인만 되고 아직 안 나간 돈은 위 &lsquo;지급 대기&rsquo;에 있습니다.</p>'+
+      '</section>'+
+
+      '<section class="card"><h2>지출 목록</h2>'+
+        '<div class="tabs" style="margin:0 0 12px">'+tabs.map(function(t){
+          return '<button type="button" data-atab="'+t[0]+'" aria-pressed="'+(S.acctTab===t[0]?'true':'false')+'">'+t[1]+
+            '<span class="n">'+acctList(t[0]).length+'</span></button>';
+        }).join('')+'</div>'+
+        (list.length
+          ? '<div class="scroll"><table><thead><tr><th>제목</th><th>행사</th><th>계정과목</th><th>받는 사람</th><th class="num">금액</th><th>지급</th><th class="num">일자</th></tr></thead><tbody>'+
+            list.map(function(d){
+              var ps=payState(d), ev=d.eventId&&S.events[d.eventId];
+              return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
+                '<td><b>'+esc(d.title||'(제목 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(d.no||'')+'</div></td>'+
+                '<td>'+esc(ev?(ev.name||''):'—')+'</td>'+
+                '<td style="color:var(--muted)">'+esc(d.account||'—')+'</td>'+
+                '<td>'+esc(d.payee||'—')+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(expTotal(d))+'</td>'+
+                '<td><span class="pill p-'+(ps==='paid'?'approved':'pending')+'">'+PAY_LABEL[ps]+'</span></td>'+
+                '<td class="num" style="color:var(--muted)">'+esc(ps==='paid'?shortTime((d.pay||{}).at):(d.dueDate||d.date||''))+'</td></tr>';
+            }).join('')+'</tbody></table></div>'
+          : '<div class="empty"><strong>해당하는 지출이 없습니다</strong>전자결재에서 지출결의서를 올리면 여기에 모입니다.</div>')+
+      '</section></div>';
+  }
+
+  function payExpense(d){
+    if(!S.db||!d)return;
+    if(docStatus(d)!=='approved') return errbar('승인이 끝난 문서만 지급 처리할 수 있습니다');
+    if(payState(d)==='paid')      return errbar('이미 지급 처리된 건입니다');
+    if(!(myRole()==='accounting'||S.me.canEdit)) return errbar('회계 역할을 가진 사람만 지급 처리할 수 있습니다');
+    var body=clone(d); delete body.id;
+    body.pay={state:'paid', at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
+    body.updatedAt=nowISO();
+    S.db.doc('docs/'+d.id).set(body).then(function(){
+      S.confirmPay=null; S.payMemo=''; flash('지급 완료로 기록했습니다'); render();
+    }).catch(function(e){ errbar('지급 처리 실패 '+(e&&(e.code||e.message)||'')); });
+  }
+
+  /* ---- 역할 ---- */
   function renderRoles(){
     var ids=Object.keys(S.roles), canCfg=S.me.canEdit;
     app.innerHTML=
@@ -946,6 +1205,8 @@
       remember(); render(); return;
     }
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
+    if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
+    if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
     if(t.id==='sealDel') return saveSeal(null);
     if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
@@ -967,6 +1228,11 @@
         touch('doc',dc.id); render(); return;
       }
       if(t.id==='docCopy') return copyDoc(dc);
+      if(t.id==='eiAdd'){ dc.items=(dc.items||[]).concat([{name:'',qty:1,price:0,note:''}]); touch('doc',dc.id); render(); return; }
+      if((el=t.closest('[data-eidel]'))){ dc.items.splice(+el.dataset.eidel,1); touch('doc',dc.id); render(); return; }
+      if(t.id==='payGo'){ var pm=$('#payMemo'); S.payMemo=pm?pm.value:''; S.confirmPay=dc.id; render(); return; }
+      if(t.id==='payNo'){ S.confirmPay=null; render(); return; }
+      if(t.id==='payYes') return payExpense(dc);
       if((el=t.closest('[data-dact]'))){
         if(el.dataset.dact==='pdf') return printDoc(dc);
         return docAct(dc, el.dataset.dact);
@@ -998,6 +1264,15 @@
     var t=e.target;
     var dc=S.docSel&&S.docs[S.docSel];
     if(dc){
+      if(dc.type==='expense'){
+        var xmap={xTitle:'title',xNo:'no',xDate:'date',xPayee:'payee',xBank:'payeeBank',xAcct:'payeeAcct',xDue:'dueDate',xNote:'note'};
+        if(xmap[t.id]){ dc[xmap[t.id]]=t.value; touch('doc',dc.id); return; }
+        if(t.dataset&&t.dataset.ei!==undefined){
+          var xi=+t.dataset.ei, xf=t.dataset.ef;
+          dc.items[xi][xf]=(xf==='qty'||xf==='price')?num(t.value,0):t.value;
+          touch('doc',dc.id); if(xf==='qty'||xf==='price') softExpense(dc); return;
+        }
+      }
       var dmap={dTitle:'title',dNo:'no',dDate:'date',dTo:'to',dCc:'cc',dSubject:'subject',dSigner:'signer',
                 dAddr:'addr',dTel1:'tel1',dTel2:'tel2',dEmail:'email'};
       if(dmap[t.id]){ dc[dmap[t.id]]=t.value; touch('doc',dc.id); return; }
@@ -1020,9 +1295,24 @@
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='sealFile') return onSealFile(t.files&&t.files[0]);
+    var xd=S.docSel&&S.docs[S.docSel];
+    if(xd&&xd.type==='expense'){
+      var sm={xEvent:'eventId',xAccount:'account',xMethod:'method'};
+      if(sm[t.id]){ xd[sm[t.id]]=t.value; touch('doc',xd.id); render(); return; }
+    }
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
   });
+
+  /* 수량·단가를 칠 때마다 전체를 다시 그리면 글자가 튄다. 숫자만 갈아끼운다. */
+  function softExpense(d){
+    var tb=document.querySelector('tbody'); if(!tb)return;
+    Array.prototype.forEach.call(tb.rows,function(tr,i){
+      var it=d.items&&d.items[i]; if(!it)return;
+      if(tr.cells[3]) tr.cells[3].textContent=won(num(it.qty,0)*num(it.price,0));
+    });
+    var tot=$('#xTotal'); if(tot) tot.textContent=won(expTotal(d));
+  }
 
   function softNumbers(ev){
     var c=compute(ev),tb=document.querySelector('tbody'); if(!tb)return;
