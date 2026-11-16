@@ -475,7 +475,7 @@
     view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
-    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,
+    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,memberEdit:null,
     people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
@@ -876,6 +876,47 @@
   }
 
   /* ============ 전자결재 ============ */
+  /* 지금 이 문서가 누구 손에 있는가.
+     결재가 돌고 있으면 그 사람, 아니면 기안한 사람이다. */
+  function docTurn(d){
+    var st=docStatus(d);
+    if(st!=='submitted'&&st!=='progress') return null;
+    var i=currentStep(d);
+    return i>=0?d.steps[i].uid:null;
+  }
+  /* 정산은 회계가 '전원' 승인해야 넘어간다. 아직 안 한 사람들이 차례다. */
+  function evTurn(ev){
+    var p=progress(ev);
+    if(p.status!=='submitted') return null;
+    if(!p.accDone){
+      var w=p.acc.filter(function(u){return p.okAcc.indexOf(u)<0;});
+      if(w.length) return w;
+    }
+    if(!p.ceoDone&&p.ceo.length) return p.ceo.slice(0,1);
+    return null;
+  }
+  function whoCell(uids,tag){
+    if(!uids||!uids.length) return '<span style="color:var(--zero)">—</span>';
+    var more=uids.length>1?' 외 '+(uids.length-1)+'명':'';
+    return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap">'+
+      '<img src="'+esc(avatarOf(uids[0]))+'" alt="" style="width:20px;height:20px;border-radius:50%;flex:0 0 auto">'+
+      '<span>'+esc(nameOf(uids[0]))+more+
+      (tag?' <span class="pill p-'+(tag==='차례'?'pending':'approved')+'">'+tag+'</span>':'')+
+      '</span></span>';
+  }
+  /* 문서·정산 한 줄에 들어갈 '담당자' 칸 */
+  function ownerCell(kind,o){
+    if(kind==='doc'){
+      var u=docTurn(o);
+      if(u) return whoCell([u],'차례');
+      return o.drafter?whoCell([o.drafter],'기안'):'<span style="color:var(--zero)">—</span>';
+    }
+    var w=evTurn(o);
+    if(w&&w.length) return whoCell(w,'차례');
+    var log=apprOf(o.id), last=log[log.length-1];
+    return last?whoCell([last.uid],'최근'):'<span style="color:var(--zero)">—</span>';
+  }
+
   function docStatus(d){
     if(d.status==='draft'||d.status==='canceled'||d.status==='rejected')return d.status;
     var st=d.steps||[];
@@ -1089,9 +1130,11 @@
 
     var recent=[];
     Object.keys(S.docs).forEach(function(k){var d=S.docs[k];
-      recent.push({at:d.updatedAt,t:'전자결재',n:d.title||'(제목 없음)',s:docStatus(d),l:DOC_STATUS[docStatus(d)],go:'doc:'+k});});
+      recent.push({at:d.updatedAt,t:'전자결재',n:d.title||'(제목 없음)',s:docStatus(d),l:DOC_STATUS[docStatus(d)],
+                   w:ownerCell('doc',d),go:'doc:'+k});});
     evs.forEach(function(e){
-      recent.push({at:e.updatedAt,t:'정산',n:e.name||'(이름 없음)',s:progress(e).status,l:SET_STATUS[progress(e).status],go:'ev:'+e.id});});
+      recent.push({at:e.updatedAt,t:'정산',n:e.name||'(이름 없음)',s:progress(e).status,l:SET_STATUS[progress(e).status],
+                   w:ownerCell('ev',e),go:'ev:'+e.id});});
     recent.sort(function(a,b){return (b.at||'')<(a.at||'')?-1:1;});
     recent=recent.slice(0,8);
 
@@ -1122,10 +1165,13 @@
         '<section class="card"><h2>월별 사례비 지급</h2>'+chart+'</section>'+
       '</div>'+
       '<section class="card"><h2>최근 활동</h2>'+
-        (recent.length?'<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>상태</th><th class="num">수정</th></tr></thead><tbody>'+
+        '<p class="hint" style="margin:0 0 10px">회사 전체 활동입니다. 모두에게 똑같이 보입니다.</p>'+
+        (recent.length?'<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>담당자</th><th>상태</th><th class="num">수정</th></tr></thead><tbody>'+
           recent.map(function(r){
             return '<tr class="rowlink" data-go="'+esc(r.go)+'"><td style="color:var(--muted)">'+r.t+'</td>'+
-              '<td><b>'+esc(r.n)+'</b></td><td><span class="pill p-'+r.s+'">'+r.l+'</span></td>'+
+              '<td><b>'+esc(r.n)+'</b></td>'+
+              '<td>'+r.w+'</td>'+
+              '<td><span class="pill p-'+r.s+'">'+r.l+'</span></td>'+
               '<td class="num" style="color:var(--muted)">'+esc(shortTime(r.at))+'</td></tr>';
           }).join('')+'</tbody></table></div>'
         :'<div class="empty" style="padding:22px 8px">아직 활동이 없습니다.</div>')+
@@ -1149,7 +1195,7 @@
         return '<button type="button" data-dtab="'+t[0]+'" aria-pressed="'+(S.docTab===t[0]?'true':'false')+'">'+t[1]+'<span class="n">'+n+'</span></button>';
       }).join('')+'</div>'+
       '<div class="card">'+(list.length?
-        '<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>문서번호</th><th>수신 / 금액</th><th>상태</th><th>결재선</th><th class="num">수정</th></tr></thead><tbody>'+
+        '<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>문서번호</th><th>수신 / 금액</th><th>담당자</th><th>상태</th><th>결재선</th><th class="num">수정</th></tr></thead><tbody>'+
         list.map(function(d){
           var st=docStatus(d), isX=d.type==='expense';
           return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
@@ -1158,8 +1204,18 @@
             '<td><b>'+esc(d.title||'(제목 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(isX?(d.payee||''):(d.subject||''))+'</div></td>'+
             '<td style="color:var(--muted);font-size:12px">'+esc(d.no||'')+'</td>'+
             '<td'+(isX?' class="num"':'')+'>'+(isX?won(expTotal(d)):esc(d.to||'—'))+'</td>'+
+            '<td>'+ownerCell('doc',d)+'</td>'+
             '<td><span class="pill p-'+st+'">'+DOC_STATUS[st]+'</span></td>'+
-            '<td style="font-size:12px;color:var(--muted)">'+(d.steps&&d.steps.length?d.steps.map(function(s){return nameOf(s.uid)+(s.state==='approved'?' ✓':s.state==='rejected'?' ✕':'');}).join(' → '):'미지정')+'</td>'+
+            '<td style="font-size:12px;color:var(--muted)">'+(function(){
+              if(!(d.steps&&d.steps.length)) return '미지정';
+              var cur=currentStep(d);
+              return d.steps.map(function(s,si){
+                var nm=nameOf(s.uid)+(s.state==='approved'?' ✓':s.state==='rejected'?' ✕':'');
+                /* 지금 차례인 사람을 굵게. 줄만 봐도 누가 쥐고 있는지 보여야 한다. */
+                return (si===cur&&(st==='submitted'||st==='progress'))
+                  ? '<b style="color:var(--warn)">'+esc(nm)+'</b>' : esc(nm);
+              }).join(' → ');
+            })()+'</td>'+
             '<td class="num" style="color:var(--muted)">'+esc(shortTime(d.updatedAt))+'</td></tr>';
         }).join('')+'</tbody></table></div>'
         :'<div class="empty"><strong>문서가 없습니다</strong>위 버튼으로 새 문서를 시작하세요.</div>')+'</div>';
@@ -1895,10 +1951,11 @@
       settleTabs()+
       '<div class="actions" style="margin-bottom:14px"><button class="btn primary" id="newEv"'+(writable()?'':' disabled')+'>+ 새 행사</button></div>'+
       '<div class="card">'+(ids.length?
-        '<div class="scroll"><table><thead><tr><th>행사</th><th>상태</th><th class="num">잔여액</th><th class="num">지급 합계</th></tr></thead><tbody>'+
+        '<div class="scroll"><table><thead><tr><th>행사</th><th>담당자</th><th>상태</th><th class="num">잔여액</th><th class="num">지급 합계</th></tr></thead><tbody>'+
         ids.map(function(id){var ev=S.events[id],c=compute(ev),p=progress(ev);
           return '<tr class="rowlink" data-go="ev:'+esc(id)+'">'+
             '<td><b>'+esc(ev.name||'(이름 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(ev.date||'')+(ev.place?' · '+esc(ev.place):'')+'</div></td>'+
+            '<td>'+ownerCell('ev',ev)+'</td>'+
             '<td><span class="pill p-'+p.status+'">'+SET_STATUS[p.status]+'</span></td>'+
             '<td class="num">'+won(c.net)+'</td><td class="num pay">'+won(c.payTotal)+'</td></tr>';
         }).join('')+'</tbody></table></div>'
@@ -2177,6 +2234,21 @@
       S.allowed=r.error?[]:(r.data||[]); render();
     });
   }
+  /* 메일 링크로 처음 들어온 사람은 이름이 메일 앞글자로 들어간다.
+     구글로 들어오면 구글 이름이 들어오지만, 이미 만들어진 행은 덮어쓰지 않는다.
+     그럴 때 관리자가 여기서 실명으로 고친다. SQL 을 또 돌릴 일이 아니다. */
+  function saveMemberName(uid,nm){
+    if(!S.sb||!S.me.canEdit)return;
+    nm=String(nm||'').trim();
+    if(!nm) return errbar('이름을 넣어주세요');
+    S.busyUid=uid; render();
+    S.sb.from('members').update({name:nm}).eq('uid',uid).then(function(r){
+      S.busyUid=null; S.memberEdit=null;
+      if(r.error){ errbar('이름 변경 실패 — '+r.error.message); return render(); }
+      flash('이름을 바꿨습니다');
+      refreshMembers();
+    });
+  }
   function setAdmin(uid,on){
     if(!S.sb||!S.me.canEdit)return;
     if(uid===S.me.id&&!on) return errbar('자기 관리자 권한은 스스로 내릴 수 없습니다. 다른 관리자에게 부탁하세요.');
@@ -2228,11 +2300,21 @@
             '<button class="btn sm" id="admNo" style="margin-left:5px">취소</button>';
       else adm='<button class="btn sm'+(m.admin?' primary':'')+'" data-admin="'+esc(m.uid)+'">'+
             (m.admin?'관리자':'일반')+'</button>';
-      return '<tr'+(S.roleFocus===m.uid?' class="focusrow" data-urow="'+esc(m.uid)+'"':'')+
-        '><td><div style="display:flex;align-items:center;gap:8px">'+
+      var cell;
+      if(canCfg&&S.memberEdit===m.uid){
+        cell='<div style="display:flex;align-items:center;gap:6px">'+
+          '<input id="mnEdit" value="'+esc(m.name)+'" style="max-width:150px;padding:5px 8px">'+
+          '<button class="btn primary sm" data-mnsave="'+esc(m.uid)+'">저장</button>'+
+          '<button class="btn sm" id="mnNo">취소</button></div>';
+      }else{
+        cell='<div style="display:flex;align-items:center;gap:8px">'+
           '<img src="'+esc(avatarOf(m.uid))+'" alt="" style="width:26px;height:26px;border-radius:50%">'+
           '<span><b>'+esc(m.name)+'</b>'+(m.uid===S.me.id?' <span style="color:var(--muted);font-size:11.5px">(나)</span>':'')+
-          '<div style="font-size:12px;color:var(--muted)">'+esc(m.email)+'</div></span></div></td>'+
+            (canCfg?' <button class="linkbtn" data-mnedit="'+esc(m.uid)+'" style="font-size:11px">이름</button>':'')+
+            '<div style="font-size:12px;color:var(--muted)">'+esc(m.email)+'</div></span></div>';
+      }
+      return '<tr'+(S.roleFocus===m.uid?' class="focusrow" data-urow="'+esc(m.uid)+'"':'')+
+        '><td>'+cell+'</td>'+
         '<td style="width:120px">'+sel+'</td>'+
         '<td style="width:120px">'+adm+'</td>'+
         '<td class="num" style="width:92px;color:var(--muted)">'+esc(String(m.joinedAt||'').slice(0,10))+'</td></tr>';
@@ -2688,6 +2770,12 @@
     if(t.id==='urlCopy')  return put(JOIN_URL,'주소를 복사했습니다');
     if(t.id==='invAdd')   return addAllowed();
     if((el=t.closest('[data-alldel]'))) return removeAllowed(el.dataset.alldel);
+    if((el=t.closest('[data-mnedit]'))){ S.memberEdit=el.dataset.mnedit; render(); return; }
+    if(t.id==='mnNo'){ S.memberEdit=null; render(); return; }
+    if((el=t.closest('[data-mnsave]'))){
+      var box=$('#mnEdit');
+      return saveMemberName(el.dataset.mnsave, box?box.value:'');
+    }
     if((el=t.closest('[data-admin]'))){ S.confirmAdmin=el.dataset.admin; render(); return; }
     if(t.id==='admNo'){ S.confirmAdmin=null; render(); return; }
     if((el=t.closest('[data-admyes]'))){
@@ -2840,6 +2928,9 @@
     addEvidence(e.dataTransfer&&e.dataTransfer.files);
   });
   document.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&e.target&&e.target.id==='mnEdit'&&S.memberEdit){
+      e.preventDefault(); return saveMemberName(S.memberEdit, e.target.value);
+    }
     if((e.key==='Enter'||e.key===' ')&&e.target&&e.target.closest&&e.target.closest('[data-home]')){
       e.preventDefault(); goHome();
     }
