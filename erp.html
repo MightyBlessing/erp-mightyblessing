@@ -184,13 +184,17 @@
     font-size:13px; line-height:1.85}
   :root[data-theme="dark"] .doc, :root:not([data-theme="light"]) .doc{background:#F7F7F5}
   @media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .doc{background:#fff} }
-  .doc .dhead{display:flex; align-items:baseline; justify-content:space-between; gap:14px}
-  .doc .org{font-size:19px; font-weight:700; letter-spacing:-.01em}
+  .doc .dhead{position:relative; text-align:center; min-height:40px; display:flex;
+    align-items:center; justify-content:center; margin:2px 0 12px}
+  .doc .dhead .lg{position:absolute; left:0; top:50%; transform:translateY(-50%);
+    height:34px; width:auto; object-fit:contain}
+  .doc .org{font-size:25px; font-weight:700; letter-spacing:.06em}
   .doc .mark{font-size:12px; color:#8a6a2a; letter-spacing:.14em; font-weight:700}
-  .doc hr{border:0; border-top:2px solid #E08A2E; margin:9px 0}
+  .doc hr{border:0; border-top:1px solid #E08A2E; margin:9px 0}
   .doc hr.thin{border-top:1px solid #E08A2E}
-  .doc .to{margin:2px 0; display:flex; gap:9px}
-  .doc .to b{font-weight:400; color:#4a4f57; min-width:52px; letter-spacing:.3em}
+  .doc .to{margin:3px 0; display:flex; gap:8px; align-items:baseline}
+  .doc .to i{font-style:normal; color:#4a4f57}
+  .doc .to b{font-weight:400; color:#4a4f57; min-width:58px; letter-spacing:.34em; margin-right:-.34em}
   .doc ol.body{padding-left:19px; margin:12px 0}
   .doc ol.body li{margin-bottom:9px; text-align:justify}
   .doc table.ov{width:100%; border-collapse:collapse; margin:12px 0; font-size:12.5px}
@@ -210,6 +214,9 @@
     width:78px; height:78px; object-fit:contain; mix-blend-mode:multiply; pointer-events:none}
   .sealbox{display:flex; align-items:center; gap:14px; flex-wrap:wrap}
   .sealbox img{width:74px; height:74px; object-fit:contain; border:1px solid var(--line); border-radius:6px; background:#fff; padding:4px}
+  .sealbox img.wide{width:190px; height:56px}
+  .rail .logo img{display:block; width:134px; height:auto; background:#fff;
+    padding:7px 9px; border-radius:8px; margin-bottom:6px}
 
   /* ---- 인쇄 / PDF 저장 ---- */
   #printroot{display:none}
@@ -268,7 +275,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -300,6 +307,11 @@
   function writable(){return S.canWrite!==false;}
   function myRole(){return S.me.id?(S.roles[S.me.id]||'member'):'member';}
   function nameOf(uid){var p=S.profiles[uid];return (p&&p.name)||'알 수 없음';}
+  function avatarOf(uid){
+    if(S.avatars[uid]) return S.avatars[uid];
+    var p=S.profiles[uid];
+    return (p&&p.avatarUrl)||AV;
+  }
 
   /* ============ 정산 계산 ============ */
   function compute(ev){
@@ -373,6 +385,32 @@
     if(tab==='rejected')return all.filter(function(d){return docStatus(d)==='rejected';});
     return all;
   }
+  /* 문서번호.
+     2026년까지는 제2024/2026 접두어로 14호까지 나갔다. 2027년부터는
+     두 해를 한 회기로 묶어 제2027/2028, 제2029/2030 … 으로 간다.
+     번호는 이미 있는 문서 중 가장 큰 것 다음으로 매긴다. */
+  function docNoPrefix(y){
+    if(y<=2026) return '마블 제2024/2026';
+    var base=2027+Math.floor((y-2027)/2)*2;
+    return '마블 제'+base+'/'+(base+1);
+  }
+  function pad3(n){ n=String(n); while(n.length<3) n='0'+n; return n; }
+  function nextNo(kind){
+    var y=new Date().getFullYear();
+    var pre=(kind==='expense')?('마블 지출 '+docNoPrefix(y).replace('마블 제','')):docNoPrefix(y);
+    var re=new RegExp('^'+pre.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'-(\\d+)호$');
+    var mx=0;
+    Object.keys(S.docs).forEach(function(k){
+      var d=S.docs[k]; if(!d)return;
+      if((d.type==='expense')!==(kind==='expense'))return;
+      var m=re.exec(String(d.no||''));
+      if(m){ var n=parseInt(m[1],10); if(n>mx) mx=n; }
+    });
+    /* 종이로 나간 공문이 이미 14호까지 있다. 앱에 기록이 없어도 15호부터. */
+    if(!mx && kind!=='expense' && y<=2026) mx=14;
+    return pre+'-'+pad3(mx+1)+'호';
+  }
+
   function expTotal(d){
     return (d.items||[]).reduce(function(a,it){return a+num(it.qty,0)*num(it.price,0);},0);
   }
@@ -382,7 +420,7 @@
   /* 지출결의서는 공문과 같은 결재 엔진을 쓴다. 승인 이후 단계만 따로 붙는다. */
   function newExpenseBody(){
     var y=new Date().getFullYear();
-    return {type:'expense', title:'지출결의서', no:'마블 지출 '+y+'-001', date:today(),
+    return {type:'expense', title:'지출결의서', no:nextNo('expense'), date:today(),
       eventId:'', account:'기타', method:'bank',
       payee:'', payeeBank:'', payeeAcct:'', dueDate:'', note:'',
       items:[{name:'',qty:1,price:0,note:''}],
@@ -391,7 +429,7 @@
   }
   function newDocBody(){
     var y=new Date().getFullYear();
-    return {type:'official', title:'장소 대관 요청의 건', no:'마블 제2024/'+y+'-001호', date:today(),
+    return {type:'official', title:'장소 대관 요청의 건', no:nextNo('official'), date:today(),
       to:'', cc:'', subject:'',
       paras:['귀 교회와 당회 위에 하나님의 은혜와 평강이 충만하시기를 기원합니다.',
              '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
@@ -443,6 +481,13 @@
         '<span class="ic">'+x.i+'</span>'+x.t+
         (x.k==='docs'&&todo?'<span class="badge">'+todo+'</span>':'')+'</button>';
     }).join('');
+    var lg=$('.rail .logo');
+    if(lg){
+      var want=S.logo
+        ? '<img src="'+esc(S.logo)+'" alt="마이티블레싱"><small>ERP</small>'
+        : '마블 ERP<small>MIGHTY BLESSING</small>';
+      if(lg.innerHTML!==want) lg.innerHTML=want;
+    }
     var t=$('#ptitle');
     if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',roles:'역할'}[S.view]||'마블 ERP';
   }
@@ -666,7 +711,7 @@
     }).join('');
     var ev=d.eventId&&S.events[d.eventId];
     return '<div class="doc">'+
-      '<div class="dhead"><span class="org">지 출 결 의 서</span><span class="mark">MIGHTY BLESSING</span></div><hr>'+
+      docHead('지 출 결 의 서')+'<hr>'+
       '<div class="to"><b>문서번호</b>'+esc(d.no||'—')+'</div>'+
       '<div class="to"><b>기안일자</b>'+esc(d.date||'—')+'</div>'+
       '<div class="to"><b>행　　사</b>'+esc(ev?(ev.name||''):'—')+'</div>'+
@@ -717,6 +762,9 @@
     if(writable()&&(st==='rejected'||st==='canceled')&&d.drafter===S.me.id) acts.push('<button class="btn" data-dact="reopen">다시 작성</button>');
     if(st==='approved') acts.push('<button class="btn primary" data-dact="pdf">PDF로 내보내기</button>');
     acts.push('<button class="btn" id="docCopy">본문 복사</button>');
+    var printHint = st==='approved'
+      ? '<p class="hint" style="margin:10px 0 0">인쇄창에서 <b>&lsquo;머리글 및 바닥글&rsquo;</b> 체크를 풀어야 날짜와 주소가 안 찍힙니다. '+
+        '여백은 <b>&lsquo;기본값&rsquo;</b>, 배경 그래픽은 <b>켜</b>두세요.</p>' : '';
 
     var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
       ? (S.confirmDocDel===d.id
@@ -756,7 +804,7 @@
         '</section>'+
         '<section class="card"><h2>미리보기</h2>'+docPreview(d)+'</section>'+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
-          (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
+          (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+printHint+
         '</section>'+
       '</div></div>';
 
@@ -772,10 +820,10 @@
   function docPreview(d){
     var ov=(d.ov||[]).filter(function(r){return (r.k||'').trim()||(r.v||'').trim();});
     return '<div class="doc">'+
-      '<div class="dhead"><span class="org">마이티블레싱</span><span class="mark">MIGHTY BLESSING</span></div><hr>'+
-      '<div class="to"><b>수 신</b>'+esc(d.to||'—')+'</div>'+
-      '<div class="to"><b>참 조</b>'+esc(d.cc||'—')+'</div>'+
-      '<div class="to"><b>제 목</b>'+esc(d.subject||'—')+'</div><hr class="thin">'+
+      docHead('마이티블레싱')+'<hr>'+
+      '<div class="to"><i>□</i><b>수 신</b>: '+esc(d.to||'—')+'</div>'+
+      '<div class="to"><i>□</i><b>참 조</b>: '+esc(d.cc||'—')+'</div>'+
+      '<div class="to"><i>□</i><b>제 목</b>: '+esc(d.subject||'—')+'</div><hr class="thin">'+
       '<ol class="body">'+(d.paras||[]).map(function(p){return '<li>'+esc(p).replace(/\n/g,'<br>')+'</li>';}).join('')+'</ol>'+
       (ov.length?'<table class="ov">'+ov.map(function(r,i){
         return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\n/g,'<br>')+'</td></tr>';
@@ -814,6 +862,13 @@
     setTimeout(function(){ try{window.print();}catch(e){errbar('인쇄창을 열지 못했습니다');done();} setTimeout(done,1500); },80);
   }
 
+  /* 원본 공문의 머리: 왼쪽에 로고, 가운데에 큰 기관명. */
+  function docHead(title){
+    return '<div class="dhead">'+
+      (S.logo?'<img class="lg" src="'+esc(S.logo)+'" alt="마이티블레싱">':'')+
+      '<span class="org">'+esc(title)+'</span></div>';
+  }
+
   function docSteps(d){
     var st=docStatus(d), cur=currentStep(d);
     if(!(d.steps||[]).length) return '<div class="empty" style="padding:20px 8px">결재선이 지정되지 않았습니다.</div>';
@@ -831,7 +886,7 @@
       var d=S.docs[S.docSel]||{}; var have=(d.steps||[]).map(function(s){return s.uid;});
       el.innerHTML=hits.filter(function(h){return have.indexOf(h.id)<0;}).map(function(h){
         S.profiles[h.id]=h;
-        return '<div class="person"><img src="'+esc(h.avatarUrl)+'" alt=""><span class="nm">'+esc(h.name)+'</span>'+
+        return '<div class="person"><img src="'+esc(avatarOf(h.id))+'" alt=""><span class="nm">'+esc(h.name)+'</span>'+
           '<button class="btn sm" data-lnadd="'+esc(h.id)+'">추가</button></div>';
       }).join('');
     });
@@ -1091,12 +1146,29 @@
       '<div class="card"><h2>지정된 사람</h2>'+
         (ids.length?'<div class="people">'+ids.map(function(u){
           var pr=S.profiles[u]||{};
-          return '<div class="person"><img src="'+esc(pr.avatarUrl||'')+'" alt=""><span class="nm">'+esc(pr.name||'알 수 없는 사용자')+'</span>'+
+          return '<div class="person"><img src="'+esc(avatarOf(u))+'" alt=""><span class="nm">'+esc(pr.name||'알 수 없는 사용자')+'</span>'+
             '<select data-role-for="'+esc(u)+'"'+(canCfg?'':' disabled')+'>'+
             ['member','accounting','ceo'].map(function(r){return '<option value="'+r+'"'+(S.roles[u]===r?' selected':'')+'>'+ROLE_LABEL[r]+'</option>';}).join('')+
             '</select></div>';
         }).join('')+'</div>':'<div class="empty" style="padding:24px 8px">아직 아무도 지정되지 않았습니다.</div>')+
         (canCfg?'<h2 style="margin-top:18px">사람 추가</h2><div class="field"><input id="psearch" placeholder="이름으로 검색" autocomplete="off"></div><div class="people" id="presults"></div>':'')+
+      '</div>'+
+      '<div class="card" style="margin-top:14px"><h2>내 프로필 사진</h2>'+
+        '<p class="hint" style="margin:0 0 12px">결재선과 목록에서 이름 옆에 보입니다. 가운데를 정사각으로 잘라 180px로 줄여서 보관합니다.</p>'+
+        '<div class="sealbox">'+
+          '<img src="'+esc(avatarOf(S.me.id))+'" alt="내 프로필 사진" style="border-radius:50%">'+
+          '<div><input type="file" id="avaFile" accept="image/png,image/jpeg"></div>'+
+          (S.avatars[S.me.id]?'<button class="btn danger sm" id="avaDel">사진 지우기</button>':'')+
+        '</div>'+
+      '</div>'+
+      '<div class="card" style="margin-top:14px"><h2>로고</h2>'+
+        '<p class="hint" style="margin:0 0 12px">왼쪽 메뉴와 공문 머리에 들어갑니다. 흰 배경은 자동으로 빼냅니다.</p>'+
+        '<div class="sealbox">'+
+          (S.logo?'<img class="wide" src="'+esc(S.logo)+'" alt="등록된 로고">':'<div class="empty" style="padding:18px 20px;margin:0">등록된 로고가 없습니다</div>')+
+          (canCfg?'<div><input type="file" id="logoFile" accept="image/png,image/jpeg"></div>'+
+                  (S.logo?'<button class="btn danger sm" id="logoDel">로고 지우기</button>':''):'')+
+        '</div>'+
+        (canCfg?'':'<p class="hint" style="margin:10px 0 0">관리자만 등록할 수 있습니다.</p>')+
       '</div>'+
       '<div class="card" style="margin-top:14px"><h2>직인</h2>'+
         '<p class="hint" style="margin:0 0 12px">최종 승인된 공문을 PDF로 내보낼 때 발신명의 옆에 찍힙니다. '+
@@ -1122,7 +1194,7 @@
       img.onerror=function(){errbar('그림 형식을 읽지 못했습니다. PNG 또는 JPG로 올려주세요.');};
       img.onload=function(){
         var out;
-        try{ out=makeSeal(img); }catch(e){ return errbar('그림을 변환하지 못했습니다'); }
+        try{ out=trimImage(img,220); }catch(e){ return errbar('그림을 변환하지 못했습니다'); }
         if(!out) return errbar('직인을 찾지 못했습니다. 배경이 밝은 그림인지 확인해 주세요.');
         saveSeal(out);
       };
@@ -1132,7 +1204,7 @@
   }
   /* 올린 그림에서 흰 배경을 빼고, 인장 부분만 잘라 220px 정사각 PNG로 만든다.
      스캔한 직인은 대개 흰 종이 위에 찍혀 있어서, 그대로 쓰면 공문 글자를 가린다. */
-  function makeSeal(img){
+  function trimImage(img,N){
     var W=img.width, H=img.height;
     var c0=document.createElement('canvas'); c0.width=W; c0.height=H;
     var x0=c0.getContext('2d'); x0.drawImage(img,0,0);
@@ -1157,12 +1229,72 @@
     minX=Math.max(0,minX-pad); minY=Math.max(0,minY-pad);
     maxX=Math.min(W-1,maxX+pad); maxY=Math.min(H-1,maxY+pad);
     var cw=maxX-minX+1, ch=maxY-minY+1;
-    var N=220, cv=document.createElement('canvas'); cv.width=N; cv.height=N;
+    var cv=document.createElement('canvas'); cv.width=N; cv.height=N;
     var ctx=cv.getContext('2d');
     ctx.imageSmoothingQuality='high';
     var r2=Math.min(N/cw,N/ch), dw=cw*r2, dh=ch*r2;
     ctx.drawImage(c0,minX,minY,cw,ch,(N-dw)/2,(N-dh)/2,dw,dh);
     return cv.toDataURL('image/png');
+  }
+
+  /* 로고는 가로로 긴 그림이라 정사각으로 자르면 안 된다. 흰 배경만 빼고
+     긴 변을 560px에 맞춘다. */
+  function trimWide(img,MW,MH){
+    var sq=trimImage(img,Math.max(MW,MH)); if(!sq)return null;
+    return sq;
+  }
+  /* 얼굴 사진은 배경을 빼면 안 된다(살구색·흰옷이 뚫린다). 가운데를 정사각으로
+     자르고 줄이기만 한다. */
+  function fitSquare(img,N){
+    var cv=document.createElement('canvas'); cv.width=cv.height=N;
+    var ctx=cv.getContext('2d'); ctx.imageSmoothingQuality='high';
+    var side=Math.min(img.width,img.height);
+    ctx.drawImage(img,(img.width-side)/2,(img.height-side)/2,side,side,0,0,N,N);
+    return cv.toDataURL('image/jpeg',0.86);
+  }
+  function readImage(file,limitMB,done){
+    if(!file)return;
+    if(file.size>limitMB*1024*1024) return errbar('그림이 너무 큽니다 ('+limitMB+'MB 이하)');
+    var fr=new FileReader();
+    fr.onerror=function(){errbar('파일을 읽지 못했습니다');};
+    fr.onload=function(){
+      var img=new Image();
+      img.onerror=function(){errbar('그림 형식을 읽지 못했습니다. PNG 또는 JPG로 올려주세요.');};
+      img.onload=function(){ try{ done(img); }catch(e){ errbar('그림을 변환하지 못했습니다'); } };
+      img.src=fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+  function onLogoFile(file){
+    readImage(file,8,function(img){
+      var out=trimWide(img,560,160);
+      if(!out) return errbar('로고를 찾지 못했습니다. 배경이 밝은 그림인지 확인해 주세요.');
+      if(!S.db)return;
+      S.db.doc('config/logo').set({dataUrl:out,updatedAt:nowISO()})
+        .then(function(){ flash('로고를 등록했습니다'); })
+        .catch(function(e){ errbar('로고 저장 실패 — 관리자 권한을 확인해 주세요 ('+(e&&(e.code||e.message)||'')+')'); });
+    });
+  }
+  function saveLogo(v){
+    if(!S.db)return;
+    S.db.doc('config/logo').set({dataUrl:v||'',updatedAt:nowISO()})
+      .then(function(){ flash('로고를 지웠습니다'); })
+      .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
+  }
+  function onAvatarFile(file){
+    readImage(file,8,function(img){
+      if(!S.db||!S.me.id)return;
+      var out=fitSquare(img,180);
+      S.db.doc('profiles/'+S.me.id).set({avatar:out,updatedAt:nowISO()})
+        .then(function(){ flash('프로필 사진을 바꿨습니다'); })
+        .catch(function(e){ errbar('사진 저장 실패 '+(e&&(e.code||e.message)||'')); });
+    });
+  }
+  function clearAvatar(){
+    if(!S.db||!S.me.id)return;
+    S.db.doc('profiles/'+S.me.id).set({avatar:'',updatedAt:nowISO()})
+      .then(function(){ flash('프로필 사진을 지웠습니다'); })
+      .catch(function(e){ errbar('삭제 실패 '+(e&&(e.code||e.message)||'')); });
   }
 
   function saveSeal(dataUrl){
@@ -1178,7 +1310,7 @@
       var el=$('#presults'); if(!el)return;
       el.innerHTML=hits.filter(function(h){return !S.roles[h.id];}).map(function(h){
         S.profiles[h.id]=h;
-        return '<div class="person"><img src="'+esc(h.avatarUrl)+'" alt=""><span class="nm">'+esc(h.name)+'</span>'+
+        return '<div class="person"><img src="'+esc(avatarOf(h.id))+'" alt=""><span class="nm">'+esc(h.name)+'</span>'+
           '<button class="btn sm" data-add="'+esc(h.id)+'">추가</button></div>';
       }).join('');
     });
@@ -1199,6 +1331,8 @@
     if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
     if(t.id==='sealDel') return saveSeal(null);
+    if(t.id==='logoDel') return saveLogo(null);
+    if(t.id==='avaDel')  return clearAvatar();
     if(t.id==='signOut'&&S.sb){ S.sb.auth.signOut().then(function(){location.reload();}); return; }
 
     /* 전자결재 */
@@ -1286,6 +1420,8 @@
   document.addEventListener('change',function(e){
     var t=e.target;
     if(t.id==='sealFile') return onSealFile(t.files&&t.files[0]);
+    if(t.id==='logoFile') return onLogoFile(t.files&&t.files[0]);
+    if(t.id==='avaFile')  return onAvatarFile(t.files&&t.files[0]);
     var xd=S.docSel&&S.docs[S.docSel];
     if(xd&&xd.type==='expense'){
       var sm={xEvent:'eventId',xAccount:'account',xMethod:'method'};
@@ -1747,7 +1883,7 @@
           var w=$('#who');
           if(w){
             w.innerHTML='<img alt=""><span></span>'+(S.sb?'<button class="btn sm" id="signOut" style="margin-left:6px">로그아웃</button>':'');
-            w.querySelector('img').src=me.avatarUrl;
+            w.querySelector('img').src=avatarOf(me.id);
             w.querySelector('span').textContent=(me.name||'익명')+' · '+ROLE_LABEL[myRole()];
           }
           render();
@@ -1779,6 +1915,16 @@
       S.db.collection('approvals').onSnapshot(function(snap){
         var next={}; snap.docs.forEach(function(d){next[d.id]=clone(d.data());});
         S.approvals=next; resolveNames(); render();
+      },function(){});
+
+      S.db.collection('profiles').onSnapshot(function(snap){
+        var next={};
+        snap.docs.forEach(function(d){ var o=d.data()||{}; if(o.avatar) next[d.id]=o.avatar; });
+        S.avatars=next; render();
+      },function(){});
+
+      S.db.doc('config/logo').onSnapshot(function(d){
+        S.logo=(d.exists&&d.data().dataUrl)||null; render();
       },function(){});
 
       S.db.doc('config/seal').onSnapshot(function(d){
