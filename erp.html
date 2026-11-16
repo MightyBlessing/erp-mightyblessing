@@ -208,6 +208,8 @@
   input:disabled,select:disabled,textarea:disabled{opacity:.6; cursor:not-allowed}
   :focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
   .row2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
+  .row3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px}
+  @media(max-width:620px){ .row3{grid-template-columns:1fr} }
   .hint{font-size:11.5px; color:var(--muted); margin:-5px 0 11px}
 
   .seg{display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden}
@@ -477,7 +479,9 @@
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
     repTab:'pl',whYm:'',wh:{},whEdit:null,
     members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,memberEdit:null,
-    people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false};
+    people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false,
+    banks:{},ledger:{},acctMain:'spend',bankEdit:null,bankDel:null,
+    ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:''};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -1789,6 +1793,83 @@
     });
     return c;
   }
+  /* ─────────── 회계장부 ───────────
+     거래 한 줄은 이렇게 생겼다.
+       on    날짜 (통장에 찍힌 날)
+       dir   'in' 들어옴 · 'out' 나감 · 'move' 통장끼리 이동
+       amt   금액. 늘 양수로 담는다.
+       bank  계좌. move 면 '보낸' 통장
+       to    move 일 때만 — '받은' 통장
+       biz   사업명 · item 세부항목 · party 거래처 · memo 사용내역
+       way   결제수단 · payer 대신 낸 사람 · note 비고
+
+     시트에서는 환급·취소를 금액 마이너스로 적으시는데, 그러면 잔액이
+     꼬인다. 여기서는 방향을 뒤집어 받는다 — 출금에 -298,000 을 넣으면
+     입금 298,000 으로 들어간다. 보이는 숫자는 같고 잔액만 맞아진다. */
+  function bankList(){
+    return Object.keys(S.banks).map(function(k){
+      var b=clone(S.banks[k]); b.id=k; return b;
+    }).sort(function(a,b){ return (a.ord||0)-(b.ord||0) || (a.name||'').localeCompare(b.name||''); });
+  }
+  function bankName(id){ var b=S.banks[id]; return b?(b.name||''):''; }
+
+  function ledList(){
+    return Object.keys(S.ledger).map(function(k){
+      var r=clone(S.ledger[k]); r.id=k; return r;
+    }).sort(function(a,b){
+      return String(b.on||'').localeCompare(String(a.on||'')) ||
+             String(b.createdAt||'').localeCompare(String(a.createdAt||''));
+    });
+  }
+  /* 그 통장의 잔액. 이월금액에서 시작해 그 날짜까지 더한다.
+     upto 를 안 주면 전부 더한다. */
+  function bankBal(id,upto){
+    var b=S.banks[id]; if(!b) return 0;
+    var bal=num(b.open,0);
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{}, on=String(r.on||'');
+      if(!on) return;
+      if(upto&&on>upto) return;
+      if(b.openOn&&on<String(b.openOn)) return;   /* 이월 시점 이전은 안 센다 */
+      var a=num(r.amt,0);
+      if(r.dir==='move'){
+        if(r.bank===id) bal-=a;
+        if(r.to===id)   bal+=a;
+      } else if(r.bank===id){
+        bal+=(r.dir==='in'?a:-a);
+      }
+    });
+    return bal;
+  }
+  /* 거르기. 이동은 수입·지출이 아니므로 집계에서는 따로 뺀다. */
+  function ledRows(){
+    var L=ledList();
+    if(S.ledMonth) L=L.filter(function(r){ return String(r.on||'').slice(0,7)===S.ledMonth; });
+    if(S.ledBank)  L=L.filter(function(r){ return r.bank===S.ledBank||r.to===S.ledBank; });
+    if(S.ledBiz)   L=L.filter(function(r){ return r.biz===S.ledBiz; });
+    return L;
+  }
+  function ledMonths(){
+    var m={};
+    Object.keys(S.ledger).forEach(function(k){
+      var on=String((S.ledger[k]||{}).on||''); if(on) m[on.slice(0,7)]=1;
+    });
+    return Object.keys(m).sort().reverse();
+  }
+  function saveBank(id,body){
+    if(!S.db) return Promise.resolve();
+    var ref=id?S.db.doc('banks/'+id):S.db.collection('banks').doc();
+    body.updatedAt=nowISO(); if(!id) body.createdAt=nowISO();
+    return ref.set(body);
+  }
+  function saveLed(id,body){
+    if(!S.db) return Promise.resolve();
+    var ref=id?S.db.doc('ledger/'+id):S.db.collection('ledger').doc();
+    body.updatedAt=nowISO(); body.by=S.me.id||'';
+    if(!id) body.createdAt=nowISO();
+    return ref.set(body);
+  }
+
   function savePerson(id,body){
     if(!S.db) return Promise.resolve();
     var ref=id?S.db.doc('people/'+id):S.db.collection('people').doc();
@@ -1872,6 +1953,285 @@
   }
 
   var TAX_HINT=['미디어크리에이터','행사도우미','강사','공연출연','기타'];
+
+  /* 구분(출금·입금·이동)을 바꾸면 칸 생김새가 달라진다.
+     다시 그리기 전에 적던 내용을 떠서 들고 넘어간다. */
+  function ledDirChanged(dir){
+    var g=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var d=(S.ledEdit&&S.ledEdit!=='new')?clone(S.ledger[S.ledEdit]||{}):{};
+    if(S.ledDraft) d=S.ledDraft;
+    d.dir=dir; d.on=g('ldOn')||d.on; d.amt=num(g('ldAmt'),0)||d.amt;
+    d.bank=g('ldBank')||d.bank; d.memo=g('ldMemo'); d.note=g('ldNote');
+    if(dir==='move'){ d.to=g('ldTo')||d.to; }
+    else { d.biz=g('ldBiz')||d.biz; d.item=g('ldItem')||d.item;
+           d.party=g('ldParty')||d.party; d.way=g('ldWay')||d.way; d.payer=g('ldPayer')||d.payer; }
+    S.ledDraft=d; render();
+  }
+
+  function saveLedForm(){
+    var v=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var dir=v('ldDir')||'out';
+    var on=v('ldOn');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('날짜를 넣어주세요');
+    var amt=num(v('ldAmt'),0);
+    if(!amt) return errbar('금액을 넣어주세요');
+    /* 시트처럼 마이너스를 넣으시면 방향을 뒤집는다.
+       '출금 -298,000' 은 결국 298,000 이 들어온 것이다. */
+    if(amt<0){
+      amt=-amt;
+      if(dir==='out') dir='in';
+      else if(dir==='in') dir='out';
+    }
+    var bank=v('ldBank');
+    if(!bank) return errbar('통장을 골라주세요');
+
+    var body={ on:on, dir:dir, amt:amt, bank:bank,
+      memo:v('ldMemo').trim(), note:v('ldNote').trim() };
+
+    if(dir==='move'){
+      var to=v('ldTo');
+      if(!to) return errbar('받은 통장을 골라주세요');
+      if(to===bank) return errbar('같은 통장끼리는 옮길 수 없습니다');
+      body.to=to;
+      if(!body.memo) body.memo='통장 이동';
+    } else {
+      body.biz=v('ldBiz'); body.item=v('ldItem').trim(); body.party=v('ldParty').trim();
+      body.way=v('ldWay'); body.payer=v('ldPayer').trim();
+    }
+
+    var lid=S.ledEdit==='new'?null:S.ledEdit;
+    saveLed(lid,body).then(function(){
+      S.ledEdit=null; S.ledDraft=null;
+      flash(dir==='move'
+        ? won(amt)+' 을 '+bankName(bank)+' → '+bankName(body.to)+' 로 옮겼습니다'
+        : '저장했습니다');
+      render();
+    }).catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+  }
+
+  function renderBook(){
+    var canEdit=S.me.canEdit, L=ledRows(), banks=bankList();
+    var ed=S.ledEdit;
+    var cur=S.ledDraft||((ed&&ed!=='new')?(S.ledger[ed]||{}):{});
+    var months=ledMonths();
+
+    /* 이동은 수입도 지출도 아니다. 통장 사이를 오갈 뿐이라 빼고 센다. */
+    var inSum=0,outSum=0,moveN=0;
+    L.forEach(function(r){
+      var a=num(r.amt,0);
+      if(r.dir==='move'){ moveN++; return; }
+      if(r.dir==='in') inSum+=a; else outSum+=a;
+    });
+
+    if(!banks.length){
+      app.innerHTML='<div class="stack">'+acctTabs()+
+        '<section class="card"><h2>장부</h2>'+
+        '<div class="empty" style="padding:28px 8px">통장부터 만들어야 합니다.<br>'+
+        '거래는 어느 통장에서 오갔는지가 있어야 잔액이 맞습니다.'+
+        (canEdit?'<div class="actions" style="justify-content:center;margin-top:14px">'+
+          '<button class="btn primary" data-amain="banks">통장 만들러 가기</button></div>':'')+
+        '</div></section></div>';
+      return;
+    }
+
+    var dirNow=cur.dir||'out';
+    var form='';
+    if(ed&&canEdit){
+      var opt=function(v,sel){ return '<option value="'+esc(v)+'"'+(sel===v?' selected':'')+'>'+esc(v)+'</option>'; };
+      var bopt=function(sel){ return '<option value=""></option>'+banks.map(function(b){
+        return '<option value="'+esc(b.id)+'"'+(sel===b.id?' selected':'')+'>'+esc(b.name)+'</option>'; }).join(''); };
+      form='<section class="card" style="margin-bottom:14px"><h2>'+(ed==='new'?'거래 넣기':'거래 고치기')+'</h2>'+
+        '<div class="row3">'+
+          '<div class="field"><label for="ldOn">날짜</label>'+
+            '<input id="ldOn" type="date" value="'+esc(cur.on||today())+'"></div>'+
+          '<div class="field"><label for="ldDir">구분</label>'+
+            '<select id="ldDir">'+
+              '<option value="out"'+(dirNow==='out'?' selected':'')+'>출금</option>'+
+              '<option value="in"'+(dirNow==='in'?' selected':'')+'>입금</option>'+
+              '<option value="move"'+(dirNow==='move'?' selected':'')+'>통장 이동</option>'+
+            '</select></div>'+
+          '<div class="field"><label for="ldAmt">금액</label>'+
+            '<input id="ldAmt" type="number" value="'+esc(String(num(cur.amt,0)||''))+'" placeholder="0"></div>'+
+        '</div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="ldBank">'+(dirNow==='move'?'보낸 통장':'통장')+'</label>'+
+            '<select id="ldBank">'+bopt(cur.bank)+'</select></div>'+
+          (dirNow==='move'
+            ? '<div class="field"><label for="ldTo">받은 통장</label>'+
+                '<select id="ldTo">'+bopt(cur.to)+'</select></div>'
+            : '<div class="field"><label for="ldBiz">사업</label>'+
+                '<select id="ldBiz"><option value=""></option>'+BIZ.map(function(b){
+                  return opt(b,cur.biz); }).join('')+'</select></div>')+
+        '</div>'+
+        (dirNow==='move'
+          ? '<p class="hint" style="margin:-4px 0 12px">한 번만 넣으시면 보낸 통장에서 빠지고 받은 통장에 더해집니다. '+
+            '두 줄로 적지 않으셔도 됩니다.</p>'
+          : '<div class="row2">'+
+              '<div class="field"><label for="ldItem">세부항목</label>'+
+                '<input id="ldItem" value="'+esc(cur.item||'')+'" placeholder="예: 식비 · 월세 · 기타회비"></div>'+
+              '<div class="field"><label for="ldParty">거래처</label>'+
+                '<input id="ldParty" value="'+esc(cur.party||'')+'" placeholder="받은 곳 / 준 곳"></div>'+
+            '</div>')+
+        '<div class="field"><label for="ldMemo">사용내역</label>'+
+          '<input id="ldMemo" value="'+esc(cur.memo||'')+'" placeholder="무엇에 쓴 돈인지 한 줄"></div>'+
+        (dirNow==='move'?'':
+          '<div class="row2">'+
+            '<div class="field"><label for="ldWay">결제수단</label>'+
+              '<select id="ldWay"><option value=""></option>'+PAYWAY.map(function(w){
+                return opt(w,cur.way); }).join('')+'</select></div>'+
+            '<div class="field"><label for="ldPayer">대신 낸 사람</label>'+
+              '<input id="ldPayer" list="plist" value="'+esc(cur.payer||'')+'" placeholder="없으면 비워두세요"></div>'+
+          '</div>'+
+          '<p class="hint" style="margin:-4px 0 12px">남의 카드로 긁었으면 여기에 이름을 적어주세요. '+
+            '돌려드릴 돈으로 따로 셉니다.</p>')+
+        '<div class="field"><label for="ldNote">비고</label>'+
+          '<input id="ldNote" value="'+esc(cur.note||'')+'"></div>'+
+        '<div class="actions"><button class="btn primary" id="ldSave">저장</button>'+
+          '<button class="btn" id="ldCancel">취소</button></div>'+
+      '</section>';
+    }
+
+    var dirPill=function(r){
+      if(r.dir==='move') return '<span class="pill">이동</span>';
+      return r.dir==='in'
+        ? '<span class="pill p-approved">입금</span>'
+        : '<span class="pill p-rejected">출금</span>';
+    };
+    var rows=L.map(function(r){
+      var a=num(r.amt,0);
+      var where = r.dir==='move'
+        ? esc(bankName(r.bank)||'?')+' → '+esc(bankName(r.to)||'?')
+        : esc(bankName(r.bank)||'—');
+      return '<tr>'+
+        '<td style="white-space:nowrap">'+esc(r.on||'')+'</td>'+
+        '<td>'+dirPill(r)+'</td>'+
+        '<td><b>'+esc(r.memo||r.item||'(내역 없음)')+'</b>'+
+          ((r.party||r.item)?'<div style="font-size:12px;color:var(--muted)">'+
+            esc([r.biz,r.item,r.party].filter(Boolean).join(' · '))+'</div>':'')+
+          (r.payer?'<div style="font-size:11.5px;color:var(--warn)">'+esc(r.payer)+' 대신결제</div>':'')+'</td>'+
+        '<td style="color:var(--muted);font-size:12.5px">'+where+
+          (r.way?'<div style="font-size:11.5px">'+esc(r.way)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);white-space:nowrap'+
+          (r.dir==='out'?';color:var(--bad)':(r.dir==='in'?';color:var(--accent-ink)':''))+'">'+
+          (r.dir==='out'?'−':(r.dir==='in'?'+':''))+won(a)+'</td>'+
+        (canEdit?'<td style="width:110px">'+
+          (S.ledDel===r.id
+            ? '<button class="btn danger sm" data-ldyes="'+esc(r.id)+'">삭제</button>'+
+              '<button class="btn sm" id="ldNo" style="margin-left:5px">취소</button>'
+            : '<button class="btn sm" data-ldedit="'+esc(r.id)+'">고치기</button>'+
+              '<button class="del" data-lddel="'+esc(r.id)+'" aria-label="삭제" style="margin-left:4px">×</button>')+
+        '</td>':'')+
+      '</tr>';
+    }).join('');
+
+    var sel=function(id,label,now,list){
+      return '<div class="field" style="margin:0;min-width:140px"><label for="'+id+'">'+label+'</label>'+
+        '<select id="'+id+'"><option value="">전체</option>'+list.map(function(x){
+          return '<option value="'+esc(x[0])+'"'+(now===x[0]?' selected':'')+'>'+esc(x[1])+'</option>';
+        }).join('')+'</select></div>';
+    };
+
+    app.innerHTML=
+      '<div class="stack">'+
+      acctTabs()+
+      '<div class="tiles">'+
+        banks.slice(0,3).map(function(b){
+          return tile(b.name, won(bankBal(b.id)), '잔액', bankBal(b.id)<0);
+        }).join('')+
+        tile('들어옴', won(inSum), (S.ledMonth||'전체')+' 기준')+
+        tile('나감', won(outSum), (S.ledMonth||'전체')+' 기준')+
+      '</div>'+
+      form+
+      '<section class="card">'+
+        '<h2>장부'+(canEdit&&!ed?' <button class="btn primary sm" id="ldNew" style="float:right">거래 넣기</button>':'')+'</h2>'+
+        '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">'+
+          sel('ldfMonth','월',S.ledMonth,months.map(function(m){return [m,m];}))+
+          sel('ldfBank','통장',S.ledBank,banks.map(function(b){return [b.id,b.name];}))+
+          sel('ldfBiz','사업',S.ledBiz,BIZ.map(function(b){return [b,b];}))+
+        '</div>'+
+        (L.length
+          ? '<div class="scroll"><table><thead><tr>'+
+              '<th>날짜</th><th>구분</th><th>내역</th><th>통장</th><th class="num">금액</th>'+(canEdit?'<th></th>':'')+
+            '</tr></thead><tbody>'+rows+'</tbody></table></div>'+
+            '<p class="hint" style="margin-top:10px">'+L.length+'건'+
+              (moveN?' (통장 이동 '+moveN+'건은 들어옴·나감에서 뺐습니다)':'')+'</p>'
+          : '<div class="empty" style="padding:24px 8px">'+
+            (Object.keys(S.ledger).length?'이 조건에 맞는 거래가 없습니다.':'거래가 아직 없습니다.')+'</div>')+
+      '</section>'+
+      '</div>';
+    renderPeopleList();
+  }
+
+  function renderBanks(){
+    var L=bankList(), canEdit=S.me.canEdit;
+    var ed=S.bankEdit, cur=(ed&&ed!=='new')?(S.banks[ed]||{}):{};
+    var total=L.reduce(function(a,b){ return a+bankBal(b.id); },0);
+
+    var form='';
+    if(ed&&canEdit){
+      form='<section class="card" style="margin-bottom:14px"><h2>'+(ed==='new'?'통장 추가':'통장 고치기')+'</h2>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="bkName">이름</label>'+
+            '<input id="bkName" value="'+esc(cur.name||'')+'" placeholder="예: 정세훈카뱅"></div>'+
+          '<div class="field"><label for="bkOrd">순서</label>'+
+            '<input id="bkOrd" type="number" value="'+esc(String(cur.ord||L.length+1))+'"></div>'+
+        '</div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="bkOpenOn">이월 기준일</label>'+
+            '<input id="bkOpenOn" type="date" value="'+esc(cur.openOn||'2026-01-01')+'"></div>'+
+          '<div class="field"><label for="bkOpen">그 날의 잔액</label>'+
+            '<input id="bkOpen" type="number" value="'+esc(String(num(cur.open,0)))+'" placeholder="0"></div>'+
+        '</div>'+
+        '<p class="hint" style="margin:-4px 0 12px">이 날짜 이전 거래는 잔액에 안 넣습니다. '+
+          '지난 장부를 다 옮기지 않아도 여기부터 맞아떨어집니다.</p>'+
+        '<div class="field"><label for="bkNote">비고</label>'+
+          '<input id="bkNote" value="'+esc(cur.note||'')+'" placeholder="은행 · 명의 등"></div>'+
+        '<div class="actions"><button class="btn primary" id="bkSave">저장</button>'+
+          '<button class="btn" id="bkCancel">취소</button></div>'+
+      '</section>';
+    }
+
+    var rows=L.map(function(b){
+      var bal=bankBal(b.id), n=0;
+      Object.keys(S.ledger).forEach(function(k){
+        var r=S.ledger[k]||{}; if(r.bank===b.id||r.to===b.id) n++;
+      });
+      return '<tr>'+
+        '<td><b>'+esc(b.name||'(이름 없음)')+'</b>'+
+          (b.note?'<div style="font-size:12px;color:var(--muted)">'+esc(b.note)+'</div>':'')+'</td>'+
+        '<td style="color:var(--muted);font-size:12.5px">'+esc(b.openOn||'—')+'<br>'+won(num(b.open,0))+'</td>'+
+        '<td class="num">'+n+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);font-weight:600'+(bal<0?';color:var(--bad)':'')+'">'+won(bal)+'</td>'+
+        (canEdit?'<td style="width:120px">'+
+          (S.bankDel===b.id
+            ? '<button class="btn danger sm" data-bkyes="'+esc(b.id)+'">삭제</button>'+
+              '<button class="btn sm" id="bkNo" style="margin-left:5px">취소</button>'
+            : '<button class="btn sm" data-bkedit="'+esc(b.id)+'">고치기</button>'+
+              (n?'':'<button class="del" data-bkdel="'+esc(b.id)+'" aria-label="삭제" style="margin-left:4px">×</button>'))+
+        '</td>':'')+
+      '</tr>';
+    }).join('');
+
+    app.innerHTML=
+      '<div class="stack">'+
+      acctTabs()+
+      form+
+      '<section class="card">'+
+        '<h2>통장'+(canEdit&&!ed?' <button class="btn primary sm" id="bkNew" style="float:right">통장 추가</button>':'')+'</h2>'+
+        (L.length
+          ? '<div class="scroll"><table><thead><tr>'+
+              '<th>통장</th><th>이월</th><th class="num">거래</th><th class="num">잔액</th>'+(canEdit?'<th></th>':'')+
+            '</tr></thead><tbody>'+rows+
+            '<tr><th>합계</th><th></th><th></th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(total)+'</th>'+(canEdit?'<th></th>':'')+'</tr>'+
+            '</tbody></table></div>'
+          : '<div class="empty" style="padding:24px 8px">통장이 아직 없습니다.'+
+            (canEdit?'<br>「통장 추가」를 눌러 이월잔액부터 넣어주세요.':'')+'</div>')+
+        '<p class="hint" style="margin-top:10px">잔액은 이월잔액에 장부의 거래를 더해 계산합니다. '+
+          '통장에 찍힌 숫자와 다르면 빠진 거래가 있는 것입니다.</p>'+
+      '</section>'+
+      '</div>';
+  }
 
   function renderPeople(){
     var L=peopleList(), q=(S.peopleQ||'').trim();
@@ -2134,7 +2494,18 @@
     return ev?(ev.name||'(이름 없음)'):'행사 미지정';
   }
 
+  function acctTabs(){
+    return '<div class="tabs" style="margin:0 0 14px">'+
+      [['spend','지출 현황'],['book','장부'],['banks','통장']].map(function(x){
+        return '<button type="button" data-amain="'+x[0]+'" aria-pressed="'+(S.acctMain===x[0]?'true':'false')+'">'+x[1]+
+          (x[0]==='book'?'<span class="n">'+Object.keys(S.ledger).length+'</span>':'')+
+          (x[0]==='banks'?'<span class="n">'+Object.keys(S.banks).length+'</span>':'')+'</button>';
+      }).join('')+'</div>';
+  }
+
   function renderAcct(){
+    if(S.acctMain==='book')  return renderBook();
+    if(S.acctMain==='banks') return renderBanks();
     var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
     var pending=approved.filter(function(d){return payState(d)==='pending';});
     var paid=approved.filter(function(d){return payState(d)==='paid';});
@@ -2161,6 +2532,7 @@
 
     app.innerHTML=
       '<div class="stack">'+
+      acctTabs()+
       '<div class="tiles">'+
         tile('지급 대기', won(sum(pending)), pending.length+'건 · 승인됨', pending.length>0)+
         tile('이번 달 지급', won(sum(mPaid)), mPaid.length+'건')+
@@ -2448,6 +2820,12 @@
        · 지급명세서 — 한 사람에게 여러 번 지급된 건 합쳐서 한 줄
        · 특이사항은 비고에 적는다
      주민등록번호는 넣지 않는다. 준철님이 따로 관리하신다. */
+  /* 사업 구분. 「2026 마이티블레싱 회계」 시트의 사업명을 그대로 쓴다.
+     여기를 바꾸면 지난 장부와 대조가 안 되므로 함부로 고치지 않는다. */
+  var BIZ=['가. 운영비','나. 컨테이너','다. 예배운영','라. 사업비'];
+  /* 결제수단. 시트 「분류」 탭에 적힌 경우의 수. */
+  var PAYWAY=['계좌이체','세훈카드','준철카드','준철카드(신용)','현금영수증','세금계산서','현금'];
+
   var INC_RATE=0.03, LOC_RATE=0.003;
   var TAX_DEFAULT='행사도우미';
   function taxOf(amt){
@@ -2990,6 +3368,54 @@
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
     if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
+    if((el=t.closest('[data-amain]'))){
+      S.acctMain=el.dataset.amain; S.ledEdit=null; S.bankEdit=null; S.ledDraft=null;
+      S.ledDel=null; S.bankDel=null; remember(); render(); return;
+    }
+    /* ── 통장 ── */
+    if(t.id==='bkNew'){ S.bankEdit='new'; render(); return; }
+    if(t.id==='bkCancel'){ S.bankEdit=null; render(); return; }
+    if((el=t.closest('[data-bkedit]'))){ S.bankEdit=el.dataset.bkedit; render(); return; }
+    if((el=t.closest('[data-bkdel]'))){ S.bankDel=el.dataset.bkdel; render(); return; }
+    if(t.id==='bkNo'){ S.bankDel=null; render(); return; }
+    if((el=t.closest('[data-bkyes]'))){
+      var bid=el.dataset.bkyes;
+      /* 거래가 붙어 있으면 지우는 단추 자체를 안 보여준다. 그래도 한 번 더 본다. */
+      var used=Object.keys(S.ledger).some(function(k){
+        var r=S.ledger[k]||{}; return r.bank===bid||r.to===bid; });
+      if(used){ S.bankDel=null; errbar('거래가 들어 있는 통장은 지울 수 없습니다'); return render(); }
+      S.bankDel=null;
+      S.db.doc('banks/'+bid).delete().then(function(){ flash('통장을 지웠습니다'); })
+        .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+      return;
+    }
+    if(t.id==='bkSave'){
+      var nm=($('#bkName')&&$('#bkName').value||'').trim();
+      if(!nm) return errbar('통장 이름을 넣어주세요');
+      var on=($('#bkOpenOn')&&$('#bkOpenOn').value)||'';
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('이월 기준일을 넣어주세요');
+      var body={ name:nm, ord:num($('#bkOrd')&&$('#bkOrd').value,0),
+        openOn:on, open:num($('#bkOpen')&&$('#bkOpen').value,0),
+        note:($('#bkNote')&&$('#bkNote').value||'').trim() };
+      var bid=S.bankEdit==='new'?null:S.bankEdit;
+      saveBank(bid,body).then(function(){ S.bankEdit=null; flash('저장했습니다'); render(); })
+        .catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+      return;
+    }
+    /* ── 거래 ── */
+    if(t.id==='ldNew'){ S.ledEdit='new'; S.ledDraft=null; render(); return; }
+    if(t.id==='ldCancel'){ S.ledEdit=null; S.ledDraft=null; render(); return; }
+    if((el=t.closest('[data-ldedit]'))){ S.ledEdit=el.dataset.ldedit; S.ledDraft=null; render(); return; }
+    if((el=t.closest('[data-lddel]'))){ S.ledDel=el.dataset.lddel; render(); return; }
+    if(t.id==='ldNo'){ S.ledDel=null; render(); return; }
+    if((el=t.closest('[data-ldyes]'))){
+      var lid=el.dataset.ldyes; S.ledDel=null;
+      S.db.doc('ledger/'+lid).delete().then(function(){ flash('거래를 지웠습니다'); })
+        .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+      return;
+    }
+    if(t.id==='ldSave') return saveLedForm();
+
     if((el=t.closest('[data-stab]'))){ S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); return; }
     if(t.id==='pNew'){ S.personEdit='new'; render(); return; }
     if(t.id==='pCancel'||t.id==='pfCancel'){ S.personEdit=null; render(); return; }
@@ -3134,6 +3560,10 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='ldfMonth'){ S.ledMonth=t.value; render(); return; }
+    if(t.id==='ldfBank'){ S.ledBank=t.value; render(); return; }
+    if(t.id==='ldfBiz'){ S.ledBiz=t.value; render(); return; }
+    if(t.id==='ldDir'){ return ledDirChanged(t.value); }
     if(t.dataset&&t.dataset.whrole!==undefined){
       var pid=t.dataset.whrole, pv=clone(S.people[pid]||{});
       pv.taxRole=t.value; pv.updatedAt=nowISO();
@@ -3937,6 +4367,16 @@
       S.db.collection('people').onSnapshot(function(snap){
         var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
         S.people=next; render();
+      },function(){});
+
+      S.db.collection('banks').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.banks=next; render();
+      },function(){});
+
+      S.db.collection('ledger').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.ledger=next; render();
       },function(){});
 
       var notifSeen=0;
