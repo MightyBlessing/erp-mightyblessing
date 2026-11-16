@@ -474,7 +474,7 @@
 
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
-    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',payOn:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
+    view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',payOn:'',payBank:'',payWh:true,logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
     repTab:'pl',whYm:'',wh:{},whEdit:null,
@@ -1315,6 +1315,7 @@
           '<div class="field"><label for="payMemo">지급 메모 (선택)</label>'+
             '<input id="payMemo" placeholder="예: 국민은행 이체" value="'+esc(S.payMemo||'')+'"></div>'+
         '</div>'+
+        bankPick('payBank')+
         '<p class="hint" style="margin:-4px 0 12px">통장에 찍힌 날짜입니다. 원천세·지급명세서를 이 날짜로 끊습니다.</p>'+
         '<div class="actions">'+(S.confirmPay===d.id
           ? '<span style="color:var(--bad);font-size:12.5px;align-self:center">'+esc(S.payOn||today())+' 에 '+won(total)+' 지급한 것으로 기록합니다</span>'+
@@ -1968,6 +1969,35 @@
     S.ledDraft=d; render();
   }
 
+  /* ─── 자동 전표 ───
+     돈이 나갔다고 기록하는 순간 장부에도 한 줄 꽂는다. 안 그러면
+     같은 일을 두 번 적게 되고, 둘 중 하나는 반드시 빠진다.
+
+     src 로 어디서 온 전표인지 적어둔다. 같은 문서를 두 번 처리해도
+     줄이 둘로 늘지 않는다 — 있으면 고쳐 쓴다. */
+  function ledBySrc(src){
+    var hit=null;
+    Object.keys(S.ledger).forEach(function(k){
+      if((S.ledger[k]||{}).src===src) hit=k;
+    });
+    return hit;
+  }
+  function postLed(src,body){
+    if(!S.db) return Promise.resolve();
+    body.src=src;
+    var old=ledBySrc(src);
+    return saveLed(old,body);
+  }
+  /* 지급 처리 화면에 붙이는 통장 고르개. 통장이 없으면 안 보인다. */
+  function bankPick(id){
+    var L=bankList(); if(!L.length) return '';
+    return '<div class="field"><label for="'+id+'">나간 통장</label>'+
+      '<select id="'+id+'"><option value="">— 장부에 안 넣음 —</option>'+
+      L.map(function(b){
+        return '<option value="'+esc(b.id)+'"'+(S.payBank===b.id?' selected':'')+'>'+esc(b.name)+'</option>';
+      }).join('')+'</select></div>';
+  }
+
   function saveLedForm(){
     var v=function(id){ var e=$('#'+id); return e?e.value:''; };
     var dir=v('ldDir')||'out';
@@ -2108,7 +2138,9 @@
         '<td><b>'+esc(r.memo||r.item||'(내역 없음)')+'</b>'+
           ((r.party||r.item)?'<div style="font-size:12px;color:var(--muted)">'+
             esc([r.biz,r.item,r.party].filter(Boolean).join(' · '))+'</div>':'')+
-          (r.payer?'<div style="font-size:11.5px;color:var(--warn)">'+esc(r.payer)+' 대신결제</div>':'')+'</td>'+
+          (r.payer?'<div style="font-size:11.5px;color:var(--warn)">'+esc(r.payer)+' 대신결제</div>':'')+
+          (r.src?'<div style="font-size:11px;color:var(--muted)">'+
+            (r.src.indexOf('doc:')===0?'지출결의서에서 자동':'정산에서 자동')+'</div>':'')+'</td>'+
         '<td style="color:var(--muted);font-size:12.5px">'+where+
           (r.way?'<div style="font-size:11.5px">'+esc(r.way)+'</div>':'')+'</td>'+
         '<td class="num" style="font-family:var(--font-num);white-space:nowrap'+
@@ -2451,6 +2483,16 @@
       if(p.status==='approved'&&iAcc){
         btns.push('<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">'+
           '이체일 <input id="evPayOn" type="date" value="'+esc(S.payOn||today())+'" style="width:150px;padding:6px 8px"></span>');
+        var bl=bankList();
+        if(bl.length){
+          btns.push('<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">'+
+            '나간 통장 <select id="evPayBank" style="width:150px;padding:6px 8px">'+
+            '<option value="">— 장부에 안 넣음 —</option>'+
+            bl.map(function(b){ return '<option value="'+esc(b.id)+'"'+(S.payBank===b.id?' selected':'')+'>'+esc(b.name)+'</option>'; }).join('')+
+            '</select></span>');
+          btns.push('<label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">'+
+            '<input type="checkbox" id="evPayWh"'+(S.payWh!==false?' checked':'')+'> 원천세 떼고 보냄</label>');
+        }
         btns.push('<button class="btn primary" data-act="paid">지급 완료</button>');
       }
       if(p.status==='approved'&&!did('confirm'))btns.push('<button class="btn" data-act="confirm">확인했습니다</button>');
@@ -2597,10 +2639,21 @@
     var body=clone(d); delete body.id;
     body.pay={state:'paid', on:on, at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
     body.updatedAt=nowISO();
+    var bank=S.payBank||'';
     S.db.doc('docs/'+d.id).set(body).then(function(){
-      S.confirmPay=null; S.payMemo=''; S.payOn='';
+      S.confirmPay=null; S.payMemo=''; S.payOn=''; S.payBank='';
       notify(d.drafter, '「'+docLabel(d)+'」 '+won(expTotal(d))+' 지급이 끝났습니다', d.id);
-      flash('지급 완료로 기록했습니다'); render();
+      if(!bank){ flash('지급 완료로 기록했습니다'); return render(); }
+      var ev=d.eventId?S.events[d.eventId]:null;
+      postLed('doc:'+d.id,{
+        on:on, dir:'out', amt:expTotal(d), bank:bank,
+        biz:ev?'다. 예배운영':'가. 운영비',
+        item:(d.account||d.title||'').slice(0,40),
+        party:(d.payee||'').slice(0,40),
+        memo:docLabel(d)+(ev?' · '+(ev.name||''):''),
+        way:(METHODS[d.method]||''), note:S.payMemo||''
+      }).then(function(){ flash('지급 완료 · 장부에 넣었습니다'); render(); })
+       .catch(function(){ flash('지급은 기록했는데 장부에 못 넣었습니다'); render(); });
     }).catch(function(e){ errbar('지급 처리 실패 '+(e&&(e.code||e.message)||'')); });
   }
 
@@ -3560,6 +3613,8 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='payBank'||t.id==='evPayBank'){ S.payBank=t.value; return; }
+    if(t.id==='evPayWh'){ S.payWh=!!t.checked; return; }
     if(t.id==='ldfMonth'){ S.ledMonth=t.value; render(); return; }
     if(t.id==='ldfBank'){ S.ledBank=t.value; render(); return; }
     if(t.id==='ldfBiz'){ S.ledBiz=t.value; render(); return; }
@@ -3774,9 +3829,27 @@
     if(kind==='paid'){
       var on=String(S.payOn||'').slice(0,10);
       if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('이체일을 넣어주세요');
+      var bank=S.payBank||'', wh=S.payWh!==false;
+      var gross=compute(ev).payTotal;
+      /* 통장에서 실제로 나간 돈. 원천세를 떼고 보내셨으면 세후다.
+         원천세는 익월 10일에 따로 나가므로 그때 한 줄 더 적으시면 된다. */
+      var tx=taxOf(gross), net=wh?(gross-tx.inc-tx.loc):gross;
       ev.status='paid'; ev.paidOn=on;
       S.db.doc('events/'+ev.id).update({status:'paid',paidOn:on,updatedAt:nowISO()})
-        .then(function(){ S.payOn=''; logApproval(ev,'paid'); flash(on+' 지급으로 기록했습니다'); render(); })
+        .then(function(){
+          S.payOn=''; S.payBank=''; logApproval(ev,'paid');
+          if(!bank){ flash(on+' 지급으로 기록했습니다'); return render(); }
+          return postLed('ev:'+ev.id,{
+            on:on, dir:'out', amt:net, bank:bank,
+            biz:'다. 예배운영', item:'사례비',
+            party:(ev.members||[]).length+'명',
+            memo:(ev.name||'행사')+' 사례비',
+            way:'계좌이체',
+            note:wh?('세전 '+won(gross)+' · 원천세 '+won(tx.inc+tx.loc)+' 공제'):'원천세 공제 없음'
+          }).then(function(){
+            flash(on+' 지급 · 장부에 '+won(net)+' 넣었습니다'); render();
+          });
+        })
         .catch(function(e){ errbar('처리 실패 '+(e&&e.code||'')); });
       return;
     }
