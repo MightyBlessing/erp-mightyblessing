@@ -483,7 +483,8 @@
     banks:{},ledger:{},acctMain:'spend',bankEdit:null,bankDel:null,
     ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
-    adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open'};
+    adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
+    payWho:null,payYm:''};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -2807,6 +2808,187 @@
       '</div>';
   }
 
+  /* ─── 개인별 급여 ───
+     「이 사람이 이번 달에 얼마 받았나」 하나만 답한다.
+     보고서의 원천세 화면은 회사가 신고하려고 보는 것이고,
+     여기는 사람 한 명을 세로로 본다.
+
+     일당과 수당을 따로 보여주는 게 핵심이다. 합계만 보면
+     "왜 저 사람보다 적지" 를 설명할 수 없다. */
+  function payKeyOf(m){ return m.pid?('p:'+m.pid):('n:'+String(m.n||'').trim()); }
+  function payKeyName(key){
+    if(!key) return '';
+    if(key.slice(0,2)==='p:') return personName(key.slice(2))||'(이름 없음)';
+    return key.slice(2)||'(이름 없음)';
+  }
+  /* 한 사람이 그 달에 참여한 행사들. 지급 전이면 행사 날짜로,
+     지급 후면 실제 이체일로 잡는다. evPaidOn 이 그 둘을 이미 가린다. */
+  function payRows(key,ym){
+    var out=[];
+    Object.keys(S.events).forEach(function(k){
+      var ev=S.events[k], c=null;
+      (ev.members||[]).forEach(function(m,i){
+        if(payKeyOf(m)!==key) return;
+        var on=evPaidOn(ev);
+        if(ym&&String(on).slice(0,7)!==ym) return;
+        if(!c) c=compute(ev);
+        var day=m.w?c.rate:0, prep=num(c.alloc[i],0);
+        if(day+prep<=0) return;
+        out.push({evId:k, evName:ev.name||'(이름 없음)', on:on,
+                  day:day, prep:prep, amt:day+prep, capped:!!c.capped[i],
+                  pt:num(m.pt,0), role:m.r||'',
+                  paid:progress(ev).status==='paid'});
+      });
+    });
+    return out.sort(function(a,b){ return String(a.on).localeCompare(String(b.on)); });
+  }
+  /* 급여가 잡힌 달 목록 */
+  function payMonths(key){
+    var m={};
+    Object.keys(S.events).forEach(function(k){
+      var ev=S.events[k];
+      (ev.members||[]).forEach(function(x){
+        if(payKeyOf(x)!==key) return;
+        var on=String(evPaidOn(ev)||'').slice(0,7);
+        if(on) m[on]=1;
+      });
+    });
+    return Object.keys(m).sort().reverse();
+  }
+  /* 이 사람의 대신결제 중 아직 못 받은 것 */
+  function payAdv(key){
+    if(key.slice(0,2)!=='p:') return [];
+    var pr=S.people[key.slice(2)]||{};
+    var uid=pr.uid||'';
+    var nm=(pr.name||'').trim();
+    return advOpen().filter(function(a){
+      return (uid&&a.uid===uid) || (!a.uid&&nm&&String(a.name||'').trim()===nm);
+    });
+  }
+
+  function renderPay(){
+    var key=S.payWho;
+    var months=payMonths(key);
+    var ym=S.payYm||months[0]||today().slice(0,7);
+    var L=payRows(key,ym), all=payRows(key,'');
+    var name=payKeyName(key);
+
+    var day=0,prep=0,paidSum=0;
+    L.forEach(function(r){ day+=r.day; prep+=r.prep; if(r.paid) paidSum+=r.amt; });
+    var tot=day+prep;
+
+    /* 원천세는 그 달에 실제로 이체된 금액에만 붙는다.
+       회계가 지급명세서에서 고친 값이 있으면 그걸 따른다. */
+    var t=taxOf(paidSum);
+    var doc=S.wh[ym]||{}, adj=(doc.adj||{})[key]||{};
+    var inc=(adj.inc===undefined||adj.inc===null)?t.inc:num(adj.inc,0);
+    var loc=(adj.loc===undefined||adj.loc===null)?t.loc:num(adj.loc,0);
+    var fixed=(inc!==t.inc)||(loc!==t.loc);
+    var netPay=paidSum-inc-loc;
+
+    var pr=(key.slice(0,2)==='p:')?(S.people[key.slice(2)]||{}):{};
+    var adv=payAdv(key);
+
+    var rows=L.map(function(r){
+      return '<tr class="rowlink" data-go="ev:'+esc(r.evId)+'">'+
+        '<td style="white-space:nowrap">'+esc(r.on||'')+'</td>'+
+        '<td><b>'+esc(r.evName)+'</b>'+
+          (r.role?'<div style="font-size:12px;color:var(--muted)">'+esc(r.role)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+
+          (r.day?won(r.day):'<span style="color:var(--zero)">—</span>')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+
+          (r.prep?won(r.prep):'<span style="color:var(--zero)">—</span>')+
+          (r.pt?'<div style="font-size:11.5px;color:var(--muted)">'+r.pt+'점'+
+            (r.capped?' · 상한':'')+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);font-weight:600">'+won(r.amt)+'</td>'+
+        '<td style="white-space:nowrap">'+
+          (r.paid?'<span class="pill p-paid">지급됨</span>':'<span class="pill p-pending">예정</span>')+'</td>'+
+      '</tr>';
+    }).join('');
+
+    app.innerHTML=
+      '<div class="stack">'+
+      '<div class="actions" style="margin:0 0 4px">'+
+        '<button class="btn sm" id="payBack">← 인력 명부</button></div>'+
+      '<section class="card"><h2>'+esc(name)+
+        '<span style="float:right;font-size:13px;font-weight:400;color:var(--muted)">'+
+          (pr.taxRole?esc(pr.taxRole):'세무 구분 없음')+
+          (pr.bank?' · '+esc(pr.bank)+' '+esc(pr.acct||''):'')+'</span></h2>'+
+        '<div class="field" style="max-width:220px"><label for="payYm">달</label>'+
+          '<select id="payYm">'+
+            (months.indexOf(ym)<0?'<option value="'+esc(ym)+'" selected>'+esc(ym)+'</option>':'')+
+            months.map(function(m){
+              return '<option value="'+esc(m)+'"'+(m===ym?' selected':'')+'>'+esc(m)+'</option>';
+            }).join('')+'</select></div>'+
+        '<p class="hint" style="margin:8px 0 0">지급이 끝난 행사는 실제 이체일 기준, '+
+          '아직인 행사는 행사 날짜 기준으로 모읍니다.</p>'+
+      '</section>'+
+      '<div class="tiles">'+
+        tile('일당', won(day), L.filter(function(r){return r.day>0;}).length+'일 근무')+
+        tile('수당', won(prep), '준비 사례비')+
+        tile('합계', won(tot), ym+' 기준')+
+        /* 아직 한 푼도 안 나갔으면 '실수령 0원'은 거짓말로 읽힌다.
+           못 받은 게 아니라 아직 때가 안 된 것이다. */
+        (paidSum>0
+          ? tile('실수령', won(netPay), paidSum<tot?'이체된 '+won(paidSum)+'에서 세금 뗀 금액':'원천세 뗀 금액')
+          : tile('실수령', '—', '아직 이체 전입니다'))+
+      '</div>'+
+      '<section class="card"><h2>'+esc(ym)+' 내역</h2>'+
+        (L.length
+          ? '<div class="scroll"><table><thead><tr>'+
+              '<th>날짜</th><th>행사</th><th class="num">일당</th><th class="num">수당</th>'+
+              '<th class="num">합계</th><th>상태</th>'+
+            '</tr></thead><tbody>'+rows+
+            '<tr><th>합계</th><th></th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(day)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(prep)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(tot)+'</th>'+
+              '<th></th></tr>'+
+            '</tbody></table></div>'+
+            '<p class="hint" style="margin-top:10px">행사 줄을 누르면 그 정산표로 갑니다.</p>'
+          : '<div class="empty" style="padding:26px 8px">이 달에 받은 돈이 없습니다.'+
+            (all.length?'<br>참여한 달: '+esc(payMonths(key).slice(0,8).join(' · ')):'')+'</div>')+
+      '</section>'+
+      (paidSum>0
+        ? '<section class="card"><h2>원천세</h2>'+
+          '<div class="scroll"><table><tbody>'+
+            '<tr><th style="text-align:left">지급액 (이체 완료분)</th>'+
+              '<td class="num" style="font-family:var(--font-num)">'+won(paidSum)+'</td></tr>'+
+            '<tr><th style="text-align:left">소득세 3%</th>'+
+              '<td class="num" style="font-family:var(--font-num)">−'+won(inc)+'</td></tr>'+
+            '<tr><th style="text-align:left">지방소득세 0.3%</th>'+
+              '<td class="num" style="font-family:var(--font-num)">−'+won(loc)+'</td></tr>'+
+            '<tr><th style="text-align:left">실수령</th>'+
+              '<td class="num" style="font-family:var(--font-num);font-weight:700">'+won(netPay)+'</td></tr>'+
+          '</tbody></table></div>'+
+          (fixed
+            ? '<div class="note n-info" style="margin-top:12px">회계가 신고 금액에 맞춰 세액을 직접 고친 달입니다 '+
+              '(계산값 '+won(t.inc)+' · '+won(t.loc)+').</div>'
+            : '')+
+          (paidSum<tot
+            ? '<div class="note n-warn" style="margin-top:12px">아직 이체되지 않은 '+won(tot-paidSum)+'은 '+
+              '세금 계산에서 빠져 있습니다. 지급이 끝나면 같이 잡힙니다.</div>'
+            : '')+
+        '</section>'
+        : '')+
+      (adv.length
+        ? '<section class="card"><h2>아직 못 받은 대신결제</h2>'+
+          '<div class="scroll"><table><thead><tr><th>낸 날</th><th>내역</th><th class="num">금액</th></tr></thead><tbody>'+
+            adv.map(function(a){
+              return '<tr><td style="white-space:nowrap">'+esc(a.on||'')+'</td>'+
+                '<td>'+esc(a.item||'')+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(num(a.amt,0))+'</td></tr>';
+            }).join('')+
+            '<tr><th>합계</th><th></th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(advSum(adv))+'</th></tr>'+
+          '</tbody></table></div>'+
+          '<p class="hint" style="margin-top:10px">급여와 별개로 돌려받을 돈입니다. '+
+            '회계 → 대신결제에서 처리합니다.</p>'+
+        '</section>'
+        : '')+
+      '</div>';
+  }
+
   function renderPeople(){
     var L=peopleList(), q=(S.peopleQ||'').trim();
     if(q) L=L.filter(function(p){
@@ -2839,14 +3021,15 @@
     var rows=L.map(function(p){
       var used=usedCount(p.id,(p.name||'').trim());
       return '<tr>'+
-        '<td><b>'+esc(p.name||'(이름 없음)')+'</b>'+
+        '<td><button class="linkbtn" data-paywho="p:'+esc(p.id)+'"><b>'+esc(p.name||'(이름 없음)')+'</b></button>'+
           (p.uid?' <span class="pill p-approved">구성원</span>':'')+
           (dups[(p.name||'').trim()]?' <span class="pill p-rejected">이름 겹침</span>':'')+
           (p.phone?'<div style="font-size:12px;color:var(--muted)">'+esc(p.phone)+'</div>':'')+'</td>'+
         '<td>'+(p.taxRole?esc(p.taxRole):'<span style="color:var(--zero)">—</span>')+'</td>'+
         '<td style="color:var(--muted)">'+(p.bank?esc(p.bank)+' '+esc(p.acct||''):'—')+'</td>'+
         '<td class="num">'+used+'</td>'+
-        '<td style="width:120px">'+
+        '<td style="width:170px">'+
+          '<button class="btn sm" data-paywho="p:'+esc(p.id)+'">급여</button> '+
           (S.personDel===p.id
             ? '<button class="btn danger sm" data-pyes="'+esc(p.id)+'">삭제</button>'+
               '<button class="btn sm" id="pNo" style="margin-left:5px">취소</button>'
@@ -2886,7 +3069,8 @@
         '<input id="pQ" placeholder="이름으로 찾기" value="'+esc(S.peopleQ||'')+'" style="max-width:200px">'+
       '</div>'+
       '<div class="card">'+(rows
-        ? '<div class="scroll"><table><thead><tr><th>이름</th><th>세무 구분</th><th>계좌</th><th class="num">참여</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+        ? '<div class="scroll"><table><thead><tr><th>이름</th><th>세무 구분</th><th>계좌</th><th class="num">참여</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'+
+          '<p class="hint" style="margin-top:10px">이름이나 「급여」를 누르면 그 사람이 달마다 받은 일당·수당을 볼 수 있습니다.</p>'
         : '<div class="empty"><strong>'+(q?'찾는 사람이 없습니다':'아직 명부가 비어 있습니다')+'</strong>'+
           (q?'':'행사에 참여하는 사람을 여기 한 번 올려두면, 정산표에서 이름을 고르기만 하면 됩니다.')+'</div>')+
       '</div>';
@@ -2904,7 +3088,7 @@
 
   /* ---- 정산 (보존) ---- */
   function renderSettleList(){
-    if(S.setTab==='people') return renderPeople();
+    if(S.setTab==='people') return S.payWho?renderPay():renderPeople();
     var ids=Object.keys(S.events).sort(function(a,b){return (S.events[b].date||'')<(S.events[a].date||'')?-1:1;});
     app.innerHTML=
       settleTabs()+
@@ -3976,6 +4160,12 @@
       S.advEdit=null; S.advDraft=null; S.advPay=null; S.advDel=null; S.advBack=null;
       remember(); render(); return;
     }
+    /* ── 개인별 급여 ── */
+    if((el=t.closest('[data-paywho]'))){
+      S.payWho=el.dataset.paywho; S.payYm=''; S.view='settle'; S.setTab='people';
+      S.personEdit=null; S.personDel=null; remember(); render(); return;
+    }
+    if(t.id==='payBack'){ S.payWho=null; S.payYm=''; render(); return; }
     /* ── 대신결제 ── */
     if((el=t.closest('[data-adwho]'))){ S.advWho=el.dataset.adwho; render(); return; }
     if(t.id==='adNew'){ S.advEdit='new'; S.advDraft=null; render(); return; }
@@ -4051,7 +4241,7 @@
     }
     if(t.id==='ldSave') return saveLedForm();
 
-    if((el=t.closest('[data-stab]'))){ S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); return; }
+    if((el=t.closest('[data-stab]'))){ S.payWho=null; S.payYm=''; S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); return; }
     if(t.id==='pNew'){ S.personEdit='new'; render(); return; }
     if(t.id==='pCancel'||t.id==='pfCancel'){ S.personEdit=null; render(); return; }
     if((el=t.closest('[data-pedit]'))){ S.personEdit=el.dataset.pedit; render(); return; }
@@ -4195,6 +4385,7 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='payYm'){ S.payYm=t.value; render(); return; }
     if(t.id==='adPayOn'){ S.advOn=t.value; return; }
     if(t.id==='adPayBank'){ S.advBank=t.value; return; }
     if(t.id==='adBiz'){
