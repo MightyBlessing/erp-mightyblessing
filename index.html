@@ -167,7 +167,8 @@
   .stack{display:flex; flex-direction:column; gap:16px}
   .cols{display:grid; grid-template-columns:minmax(0,330px) minmax(0,1fr); gap:16px; align-items:start}
   @media (max-width:980px){ .cols{grid-template-columns:minmax(0,1fr)} }
-  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px}
+  /* 타일이 다섯 장으로 늘면서 금액이 두 줄로 꺾였다. 좁으면 줄을 바꿔 내려가게 둔다. */
+  .tiles{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px}
   .tile{background:var(--card); border:1px solid var(--line); border-radius:var(--r-card);
     padding:16px 18px; box-shadow:var(--shadow-sm)}
   .tile .k{font-size:12px; color:var(--muted); font-weight:500}
@@ -297,9 +298,11 @@
   .doc .mark{font-size:12px; color:#8a6a2a; letter-spacing:.14em; font-weight:700}
   .doc hr{border:0; border-top:1px solid #E08A2E; margin:9px 0}
   .doc hr.thin{border-top:1px solid #E08A2E}
-  .doc .to{margin:3px 0; display:flex; gap:8px; align-items:baseline}
+  .doc .to{margin:3px 0; display:flex; gap:6px; align-items:baseline}
   .doc .to i{font-style:normal; color:#4a4f57}
-  .doc .to b{font-weight:400; color:#4a4f57; min-width:58px; letter-spacing:.34em; margin-right:-.34em}
+  /* 원본 공문은 '수 신' 다음에 두 칸 정도만 띄우고 바로 내용이 온다.
+     자간을 넓게 주고 최소 너비까지 크게 잡으면 말줄임표처럼 멀어진다. */
+  .doc .to b{font-weight:400; color:#4a4f57; min-width:40px; letter-spacing:.16em; margin-right:-.16em}
   .doc ol.body{padding-left:19px; margin:12px 0}
   .doc ol.body li{margin-bottom:9px; text-align:justify}
   .doc table.ov{width:100%; border-collapse:collapse; margin:12px 0; font-size:12.5px}
@@ -338,11 +341,14 @@
     padding:26px 28px; font-size:13.5px}
   #printroot.cap .doc .sealimg{mix-blend-mode:normal}
   @media print{
-    @page{size:A4; margin:18mm 16mm}
+    /* 여백을 0으로 둔다. 브라우저는 날짜·쪽번호·웹주소를 '종이 여백'에 찍는데,
+       여백이 없으면 찍을 자리가 없어 그대로 사라진다. 설정을 만질 필요가 없어진다.
+       대신 문서 안쪽에 같은 크기의 여백을 준다. */
+    @page{size:A4; margin:0}
     html,body{background:#fff !important}
     body.printing .shell{display:none !important}
     body.printing #printroot{display:block !important}
-    #printroot .doc{border:0; border-radius:0; padding:0; background:#fff !important; font-size:13.5px}
+    #printroot .doc{border:0; border-radius:0; padding:18mm 16mm; background:#fff !important; font-size:13.5px}
     #printroot .doc *{color:#15171a}
     #printroot .doc .mark{color:#8a6a2a}
     #printroot .doc .sealimg{mix-blend-mode:normal}
@@ -396,9 +402,10 @@
     settle:ic('<circle cx="12" cy="12" r="9"/><path d="M8.5 8.5l3.5 5 3.5-5"/><path d="M8.6 12.6h6.8M8.6 15h6.8"/>'),
     bell:  ic('<path d="M18 8.5a6 6 0 1 0-12 0c0 6-2.2 7.5-2.2 7.5h16.4S18 14.5 18 8.5"/><path d="M13.7 20a2 2 0 0 1-3.4 0"/>'),
     clip:  ic('<path d="M20.4 11.1 11.2 20.3a5 5 0 0 1-7.1-7.1l9.2-9.2a3.3 3.3 0 0 1 4.7 4.7l-9.2 9.2a1.7 1.7 0 0 1-2.4-2.4l8.5-8.5"/>'),
+    report:ic('<path d="M3 20.5h18"/><rect x="4.5" y="11" width="3.6" height="6.5" rx="1"/><rect x="10.2" y="6.5" width="3.6" height="11" rx="1"/><rect x="15.9" y="9" width="3.6" height="8.5" rx="1"/>'),
     roles: ic('<circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.2a5.8 5.8 0 0 1 11.2 0"/><path d="M16.5 6.4a3 3 0 0 1 0 5.9"/><path d="M18 19.2a5.3 5.3 0 0 0-1.7-3.9"/>')
   };
-  var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계'},{k:'settle',t:'정산'},{k:'roles',t:'역할'}];
+  var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계'},{k:'settle',t:'정산'},{k:'report',t:'보고서'},{k:'roles',t:'역할'}];
   var DOC_KIND={official:'공문',expense:'지출결의서'};
   var SCOPE={out:'대외용',in:'대내용'};
   /* 로고는 저장소에 같이 둔다. 공용 자산이라 사람마다 올릴 이유가 없다.
@@ -438,7 +445,9 @@
   var S={db:null,user:null,me:{id:null,name:'',avatarUrl:'',canEdit:false,isOwner:false},
     canWrite:null,events:{},approvals:{},docs:{},roles:{},profiles:{},
     view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
-    notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false};
+    notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
+    rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,
+    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -916,6 +925,7 @@
     if(S.view==='dash')return renderDash();
     if(S.view==='docs')return S.docSel&&S.docs[S.docSel]?renderDoc(S.docs[S.docSel]):renderDocList();
     if(S.view==='acct')return renderAcct();
+    if(S.view==='report')return renderReport();
     if(S.view==='roles')return renderRoles();
     return S.sel&&S.events[S.sel]?renderEvent(S.events[S.sel]):renderSettleList();
   }
@@ -938,7 +948,7 @@
       if(lg.innerHTML!==want) lg.innerHTML=want;
     }
     var t=$('#ptitle');
-    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',roles:'역할'}[S.view]||'마블 ERP';
+    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',report:'손익 보고서',roles:'역할'}[S.view]||'마블 ERP';
     renderBell();
   }
   function renderBell(){
@@ -1270,7 +1280,7 @@
     acts.push('<button class="btn" id="docCopy">본문 복사</button>');
     var printHint = st==='approved'
       ? '<p class="hint" style="margin:10px 0 0">PDF는 파일로 바로 내려받습니다. 인쇄창을 거치지 않으니 날짜·주소가 찍히지 않습니다.<br>'+
-        '종이로 뽑을 때만 <b>인쇄</b>를 쓰고, 그 창에서 <b>&lsquo;머리글 및 바닥글&rsquo;</b> 체크를 풀어주세요.</p>' : '';
+        '종이로 뽑거나 PDF가 안 만들어질 때는 <b>인쇄</b>를 쓰세요. 여백을 0으로 잡아 두어 그쪽도 날짜·주소가 찍히지 않습니다.</p>' : '';
 
     var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
       ? (S.confirmDocDel===d.id
@@ -1331,9 +1341,9 @@
     var ov=(d.ov||[]).filter(function(r){return (r.k||'').trim()||(r.v||'').trim();});
     return '<div class="doc">'+
       docHead('마이티블레싱')+'<hr>'+
-      '<div class="to"><i>□</i><b>수 신</b>: '+esc(d.to||'—')+'</div>'+
-      '<div class="to"><i>□</i><b>참 조</b>: '+esc(d.cc||'—')+'</div>'+
-      '<div class="to"><i>□</i><b>제 목</b>: '+esc(d.subject||'—')+'</div><hr class="thin">'+
+      '<div class="to"><i>□</i><b>수 신</b><span>'+esc(d.to||'—')+'</span></div>'+
+      '<div class="to"><i>□</i><b>참 조</b><span>'+esc(d.cc||'—')+'</span></div>'+
+      '<div class="to"><i>□</i><b>제 목</b><span>'+esc(d.subject||'—')+'</span></div><hr class="thin">'+
       '<ol class="body">'+(d.paras||[]).map(function(p){return '<li>'+esc(p).replace(/\n/g,'<br>')+'</li>';}).join('')+'</ol>'+
       (ov.length?'<table class="ov">'+ov.map(function(r,i){
         return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\n/g,'<br>')+'</td></tr>';
@@ -1368,6 +1378,20 @@
   /* 인쇄창을 거치면 브라우저가 날짜·쪽번호·웹주소를 종이에 같이 찍는다.
      그건 CSS로 못 막고 사람마다 설정이 달라진다. 그래서 화면을 직접 찍어
      A4 PDF 파일로 만든다. 설정을 건드릴 일이 없고 파일 이름도 정해진다. */
+  /* 로고와 직인은 data: 주소라도 붙자마자 바로 그려지지는 않는다.
+     다 올라오기 전에 찍으면 빈 칸으로 나가거나 아예 크기를 못 잡는다. */
+  function waitImages(el){
+    var imgs=Array.prototype.slice.call(el.querySelectorAll('img'));
+    return Promise.all(imgs.map(function(im){
+      if(im.complete&&im.naturalWidth) return null;
+      return new Promise(function(res){
+        var go=function(){res();};
+        im.addEventListener('load',go,{once:true});
+        im.addEventListener('error',go,{once:true});
+        setTimeout(go,2500);
+      });
+    }));
+  }
   function savePdf(d,btn){
     var root=document.getElementById('printroot'); if(!root)return;
     var label=btn?btn.textContent:'';
@@ -1380,34 +1404,44 @@
     root.className='cap';
     loadScript(PDF_LIB[0])
       .then(function(){ return loadScript(PDF_LIB[1]); })
+      .then(function(){ return waitImages(root); })
       .then(function(){
-        return window.html2canvas(root,{scale:2,backgroundColor:'#ffffff',useCORS:true,logging:false});
+        var w=root.offsetWidth||780, h=root.offsetHeight||0;
+        if(!h) throw new Error('문서 높이를 잡지 못했습니다');
+        /* 너무 긴 문서는 캔버스 한도에 걸린다. 그만큼 배율을 낮춘다. */
+        var sc=Math.min(2, 32000/Math.max(1,h));
+        return window.html2canvas(root,{scale:sc, backgroundColor:'#ffffff', useCORS:true,
+          logging:false, width:w, height:h, windowWidth:w, scrollX:0, scrollY:0});
       })
       .then(function(cv){
+        if(!cv||!cv.width||!cv.height) throw new Error('화면을 그려내지 못했습니다');
         var JS=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
-        if(!JS) throw new Error('jsPDF 없음');
+        if(!JS) throw new Error('jsPDF를 불러오지 못했습니다');
         var pdf=new JS({unit:'mm',format:'a4',orientation:'p'});
-        var PW=210, PH=297, M=16;
-        var iw=PW-M*2, ih=cv.height*iw/cv.width;
-        var img=cv.toDataURL('image/jpeg',0.94);
-        var pageH=PH-M*2;
-        var pages=Math.max(1,Math.ceil((ih-0.5)/pageH));
+        var PW=210, PH=297, M=16, iw=PW-M*2, ph=PH-M*2;
+        /* 한 장짜리 그림을 음수 좌표로 밀어 넣는 대신, 장마다 그만큼만 잘라 넣는다.
+           좌표가 음수로 가면 jsPDF 가 변환 행렬을 못 만들고 멈춘다. */
+        var sliceH=Math.max(1, Math.floor(cv.width*ph/iw));
+        var pages=Math.max(1, Math.ceil(cv.height/sliceH));
+        var tmp=document.createElement('canvas'), ctx=tmp.getContext('2d');
+        tmp.width=cv.width;
         for(var i=0;i<pages;i++){
+          var y=i*sliceH, hh=Math.min(sliceH, cv.height-y);
+          if(hh<=0) break;
+          tmp.height=hh;
+          ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,tmp.width,hh);
+          ctx.drawImage(cv, 0,y,cv.width,hh, 0,0,cv.width,hh);
+          var mm=hh*iw/cv.width;
+          if(!isFinite(mm)||mm<=0) break;
           if(i) pdf.addPage();
-          pdf.addImage(img,'JPEG',M,M-i*pageH,iw,ih);
-          /* 다음 장으로 넘어간 부분이 여백에 비친다. 흰색으로 덮는다. */
-          pdf.setFillColor(255,255,255);
-          pdf.rect(0,0,PW,M,'F');
-          pdf.rect(0,PH-M,PW,M,'F');
-          pdf.rect(0,0,M,PH,'F');
-          pdf.rect(PW-M,0,M,PH,'F');
+          pdf.addImage(tmp.toDataURL('image/jpeg',0.92),'JPEG',M,M,iw,mm);
         }
         pdf.save(docFileName(d)+'.pdf');
         flash('PDF를 내려받았습니다');
         done();
       })
       .catch(function(e){
-        errbar('PDF를 만들지 못했습니다 ('+(e&&e.message||e)+'). 대신 인쇄로 저장해 보세요.');
+        errbar('PDF를 만들지 못했습니다 ('+(e&&e.message||e)+'). 대신 인쇄를 눌러 PDF로 저장해 주세요.');
         done();
       });
   }
@@ -1711,22 +1745,322 @@
     }).catch(function(e){ errbar('지급 처리 실패 '+(e&&(e.code||e.message)||'')); });
   }
 
+  /* ---- 구성원과 초대 ---- */
+  var JOIN_URL=(function(){
+    try{ return location.origin+location.pathname.replace(/index\.html$/,''); }catch(e){ return ''; }
+  })();
+  var MB_DOMAIN='@mightyblessing.com';
+
+  function memberList(){
+    return Object.keys(S.members).map(function(u){
+      var m=S.members[u]||{};
+      return {uid:u, email:m.email||'', name:m.name||m.email||'알 수 없음',
+              admin:m.role==='admin', role:S.roles[u]||'member', joinedAt:m.createdAt||''};
+    }).sort(function(a,b){ return (a.joinedAt||'')<(b.joinedAt||'')?-1:1; });
+  }
+  /* 새로 들어온 사람은 members 테이블에만 생긴다. 실시간 구독 대상이 아니라서
+     이 화면을 열 때 다시 읽어 온다. */
+  function refreshMembers(){
+    if(!S.sb)return;
+    S.sb.from('members').select('uid,email,name,role,created_at').then(function(r){
+      if(r.error)return;
+      var map={};
+      (r.data||[]).forEach(function(x){ map[x.uid]={email:x.email,name:x.name,role:x.role,createdAt:x.created_at}; });
+      S.members=map;
+      if(S.me.id&&map[S.me.id]) S.me.canEdit=S.me.isOwner=(map[S.me.id].role==='admin');
+      render();
+    });
+  }
+  function loadAllowed(){
+    if(!S.sb||S.allowed!==null)return;
+    S.allowed=[];
+    S.sb.from('allowed_emails').select('email,note,created_at').then(function(r){
+      S.allowed=r.error?[]:(r.data||[]); render();
+    });
+  }
+  function setAdmin(uid,on){
+    if(!S.sb||!S.me.canEdit)return;
+    if(uid===S.me.id&&!on) return errbar('자기 관리자 권한은 스스로 내릴 수 없습니다. 다른 관리자에게 부탁하세요.');
+    S.busyUid=uid; S.confirmAdmin=null; render();
+    S.sb.from('members').update({role:on?'admin':'member'}).eq('uid',uid).then(function(r){
+      S.busyUid=null;
+      if(r.error){ errbar('권한 변경 실패 — '+r.error.message); return render(); }
+      notify(uid, on?'관리자 권한을 받았습니다':'관리자 권한이 해제되었습니다','');
+      flash(on?'관리자로 지정했습니다':'관리자를 해제했습니다');
+      refreshMembers();
+    });
+  }
+  function addAllowed(){
+    if(!S.sb||!S.me.canEdit)return;
+    var em=String(S.inviteMail||'').trim().toLowerCase();
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) return errbar('이메일 주소를 확인해 주세요');
+    if(em.slice(-MB_DOMAIN.length)===MB_DOMAIN) return errbar('회사 주소는 등록하지 않아도 바로 로그인됩니다');
+    S.sb.from('allowed_emails').upsert({email:em,note:''}).then(function(r){
+      if(r.error) return errbar('등록 실패 — '+r.error.message);
+      S.inviteMail=''; S.allowed=null; loadAllowed();
+      flash(em+' 주소를 허용했습니다');
+    });
+  }
+  function removeAllowed(em){
+    if(!S.sb||!S.me.canEdit)return;
+    S.sb.from('allowed_emails').delete().eq('email',em).then(function(r){
+      if(r.error) return errbar('해제 실패 — '+r.error.message);
+      S.allowed=null; loadAllowed(); flash('허용을 해제했습니다');
+    });
+  }
+  function copyInvite(){
+    put('마이티블레싱 ERP에 들어오세요.\n\n'+JOIN_URL+'\n\n'+
+        '위 주소를 열고 회사 이메일(@mightyblessing.com)을 넣으면 로그인 링크가 메일로 갑니다. '+
+        '비밀번호는 없습니다. 한 번 들어오면 그 브라우저에서는 계속 로그인된 상태로 남습니다.',
+        '초대 문구를 복사했습니다');
+  }
+  function memberCards(){
+    var canCfg=S.me.canEdit, L=memberList();
+    var rows=L.map(function(m){
+      var sel='<select data-role-for="'+esc(m.uid)+'"'+(canCfg?'':' disabled')+'>'+
+        ['member','accounting','ceo'].map(function(r){
+          return '<option value="'+r+'"'+(m.role===r?' selected':'')+'>'+ROLE_LABEL[r]+'</option>';
+        }).join('')+'</select>';
+      var adm;
+      if(!canCfg) adm=m.admin?'<span class="pill p-approved">관리자</span>':'<span style="color:var(--zero)">—</span>';
+      else if(S.busyUid===m.uid) adm='<span style="color:var(--muted);font-size:12px">바꾸는 중…</span>';
+      else if(S.confirmAdmin===m.uid)
+        adm='<button class="btn danger sm" data-admyes="'+esc(m.uid)+'">'+(m.admin?'해제':'지정')+'</button>'+
+            '<button class="btn sm" id="admNo" style="margin-left:5px">취소</button>';
+      else adm='<button class="btn sm'+(m.admin?' primary':'')+'" data-admin="'+esc(m.uid)+'">'+
+            (m.admin?'관리자':'일반')+'</button>';
+      return '<tr><td><div style="display:flex;align-items:center;gap:8px">'+
+          '<img src="'+esc(avatarOf(m.uid))+'" alt="" style="width:26px;height:26px;border-radius:50%">'+
+          '<span><b>'+esc(m.name)+'</b>'+(m.uid===S.me.id?' <span style="color:var(--muted);font-size:11.5px">(나)</span>':'')+
+          '<div style="font-size:12px;color:var(--muted)">'+esc(m.email)+'</div></span></div></td>'+
+        '<td style="width:120px">'+sel+'</td>'+
+        '<td style="width:120px">'+adm+'</td>'+
+        '<td class="num" style="width:92px;color:var(--muted)">'+esc(String(m.joinedAt||'').slice(0,10))+'</td></tr>';
+    }).join('');
+
+    var allowBlock='';
+    if(canCfg&&S.sb){
+      var al=S.allowed||[];
+      allowBlock='<h2 style="margin-top:20px">외부 주소 허용</h2>'+
+        '<p class="hint" style="margin:0 0 10px">회사 주소가 아닌 사람은 여기 등록해야 로그인됩니다. 등록 전에는 메일조차 가지 않습니다.</p>'+
+        '<div class="actions" style="margin-bottom:10px">'+
+          '<input id="invMail" placeholder="someone@gmail.com" value="'+esc(S.inviteMail||'')+'" style="flex:1;min-width:180px">'+
+          '<button class="btn sm" id="invAdd">허용</button></div>'+
+        (al.length
+          ? '<div class="people">'+al.map(function(a){
+              return '<div class="person"><span class="nm">'+esc(a.email)+'</span>'+
+                '<button class="btn danger sm" data-alldel="'+esc(a.email)+'">해제</button></div>';
+            }).join('')+'</div>'
+          : '<div class="empty" style="padding:16px 8px">허용된 외부 주소가 없습니다.</div>');
+    }
+
+    return '<div class="card"><h2>구성원 '+(L.length?'('+L.length+')':'')+'</h2>'+
+        '<p class="hint" style="margin:0 0 12px">회계는 지정된 사람이 <b>전원</b> 승인해야 정산이 넘어갑니다. 대표는 1명만 승인하면 됩니다. '+
+          '관리자는 역할·로고·직인을 바꿀 수 있는 사람입니다.</p>'+
+        (canCfg?'':'<div class="note n-info" style="margin:0 0 12px">역할은 관리자만 바꿀 수 있습니다.</div>')+
+        (rows
+          ? '<div class="scroll"><table><thead><tr><th>이름</th><th>결재 역할</th><th>관리자</th><th class="num">합류</th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+          : '<div class="empty" style="padding:24px 8px">아직 아무도 들어오지 않았습니다.</div>')+
+        (S.sb?'<div class="actions" style="margin-top:12px"><button class="btn sm" id="memRefresh">명단 새로고침</button></div>':'')+
+        allowBlock+
+      '</div>'+
+      '<div class="card" style="margin-top:14px"><h2>초대</h2>'+
+        '<p class="hint" style="margin:0 0 12px">아래 주소를 보내고 회사 이메일로 로그인하라고 하면 됩니다. 계정을 따로 만들어 줄 필요가 없고, 들어오면 이 명단에 저절로 올라옵니다.</p>'+
+        '<div class="field"><input id="joinUrl" value="'+esc(JOIN_URL)+'" readonly></div>'+
+        '<div class="actions"><button class="btn primary sm" id="invCopy">초대 문구 복사</button>'+
+          '<button class="btn sm" id="urlCopy">주소만 복사</button></div>'+
+      '</div>';
+  }
+
+  /* ---- 손익 보고서 ---- */
+  /* 한 해의 돈이 어디서 들어와 어디로 나갔는지 한 장으로 본다.
+     기준은 '현금이 움직인 날'이다. 지출결의서는 지급일, 정산은 행사일.
+     승인만 되고 아직 안 나간 돈은 여기 들어오지 않는다. */
+  function repRange(){
+    var y=S.rep.y, seg=S.rep.seg;
+    function d(m,day){ return y+'-'+pad2(m)+'-'+pad2(day); }
+    if(seg==='all') return {from:y+'-01-01', to:y+'-12-31', label:y+'년 전체'};
+    if(seg.charAt(0)==='q'){
+      var q=+seg.slice(1), m0=(q-1)*3+1;
+      return {from:d(m0,1), to:d(m0+2,lastDay(y,m0+2)), label:y+'년 '+q+'분기'};
+    }
+    var m=+seg;
+    return {from:d(m,1), to:d(m,lastDay(y,m)), label:y+'년 '+m+'월'};
+  }
+  function pad2(n){ n=String(n); return n.length<2?('0'+n):n; }
+  function lastDay(y,m){ return new Date(y,m,0).getDate(); }
+  function inRange(iso,r){ var k=String(iso||'').slice(0,10); return !!k && k>=r.from && k<=r.to; }
+
+  function repData(){
+    var r=repRange();
+    var evs=Object.keys(S.events).map(function(k){return S.events[k];})
+      .filter(function(e){ return inRange(e.date,r); })
+      .sort(function(a,b){ return (a.date||'')<(b.date||'')?-1:1; });
+    /* 지급이 끝난 지출결의서만. 기준일은 실제로 돈이 나간 날. */
+    var exps=expenses().filter(function(d){
+      return docStatus(d)==='approved' && payState(d)==='paid' && inRange((d.pay||{}).at,r);
+    });
+    var byEvent={};
+    exps.forEach(function(d){ var k=d.eventId||''; (byEvent[k]=byEvent[k]||[]).push(d); });
+
+    var rows=evs.map(function(e){
+      var c=compute(e), pr=progress(e);
+      var direct=e.mode!=='calc';
+      var rev=direct?null:num(e.rev);
+      var cost=direct?null:(num(e.opex)+num(e.tax));
+      var fee=pr.status==='paid'?c.payTotal:0;
+      var own=(byEvent[e.id]||[]).reduce(function(a,d){return a+expTotal(d);},0);
+      var sub=S.repNet?0:own;                    /* 운영비에 이미 들어갔다고 보면 빼지 않는다 */
+      return {e:e, direct:direct, rev:rev, cost:cost, net:c.net, fee:fee, feePending:pr.status!=='paid'?c.payTotal:0,
+              own:own, bal:c.net-fee-sub};
+    });
+    var loose=(byEvent['']||[]);
+    var looseTotal=loose.reduce(function(a,d){return a+expTotal(d);},0);
+
+    var sum=function(f){ return rows.reduce(function(a,x){return a+(f(x)||0);},0); };
+    var anyDirect=rows.some(function(x){return x.direct;});
+    return {r:r, rows:rows, loose:loose, looseTotal:looseTotal, exps:exps, anyDirect:anyDirect,
+      income:sum(function(x){return x.rev;}),
+      cost:sum(function(x){return x.cost;}),
+      fee:sum(function(x){return x.fee;}),
+      feePending:sum(function(x){return x.feePending;}),
+      own:sum(function(x){return x.own;}),
+      profit:sum(function(x){return x.bal;})-looseTotal};
+  }
+  function renderReport(){
+    var D=repData(), r=D.r;
+    var years={}; years[new Date().getFullYear()]=1;
+    Object.keys(S.events).forEach(function(k){var y=(S.events[k].date||'').slice(0,4); if(y)years[y]=1;});
+    expenses().forEach(function(d){var y=String((d.pay||{}).at||d.date||'').slice(0,4); if(y)years[y]=1;});
+    var ylist=Object.keys(years).sort().reverse();
+
+    var segs=[['all','전체']].concat([1,2,3,4].map(function(q){return ['q'+q,q+'분기'];}));
+
+    /* 계정과목별 */
+    var acc={}, accOrder=[];
+    D.exps.forEach(function(d){
+      var k=d.account||'기타';
+      if(!acc[k]){acc[k]={n:0,v:0};accOrder.push(k);}
+      acc[k].n++; acc[k].v+=expTotal(d);
+    });
+    accOrder.sort(function(a,b){return acc[b].v-acc[a].v;});
+    var accTotal=accOrder.reduce(function(a,k){return a+acc[k].v;},0);
+
+    var evRows=D.rows.map(function(x){
+      return '<tr class="rowlink" data-go="ev:'+esc(x.e.id)+'">'+
+        '<td><b>'+esc(x.e.name||'(이름 없음)')+'</b><div style="font-size:12px;color:var(--muted)">'+esc(x.e.date||'')+'</div></td>'+
+        '<td class="num">'+(x.direct?'<span style="color:var(--faint)">직접 입력</span>':won(x.rev))+'</td>'+
+        '<td class="num">'+(x.direct?'—':won(x.cost))+'</td>'+
+        '<td class="num">'+won(x.fee)+(x.feePending?'<div style="font-size:11px;color:var(--warn)">미지급 '+won(x.feePending)+'</div>':'')+'</td>'+
+        '<td class="num">'+(x.own?won(x.own):'<span style="color:var(--zero)">0원</span>')+'</td>'+
+        '<td class="num" style="font-weight:700;color:'+(x.bal<0?'var(--bad)':'inherit')+'">'+won(x.bal)+'</td></tr>';
+    }).join('');
+
+    app.innerHTML=
+      '<div class="stack">'+
+      '<section class="card"><h2>기간</h2>'+
+        '<div class="row2" style="align-items:end">'+
+          '<div class="field" style="margin:0"><label for="repY">연도</label><select id="repY">'+
+            ylist.map(function(y){return '<option'+(String(S.rep.y)===String(y)?' selected':'')+'>'+esc(y)+'</option>';}).join('')+
+          '</select></div>'+
+          '<div class="field" style="margin:0"><label for="repM">월</label><select id="repM">'+
+            '<option value="">(월 선택 안 함)</option>'+
+            [1,2,3,4,5,6,7,8,9,10,11,12].map(function(m){
+              return '<option value="'+pad2(m)+'"'+(S.rep.seg===pad2(m)?' selected':'')+'>'+m+'월</option>';}).join('')+
+          '</select></div>'+
+        '</div>'+
+        '<div class="tabs" style="margin:12px 0 0">'+segs.map(function(x){
+          return '<button type="button" data-rseg="'+x[0]+'" aria-pressed="'+(S.rep.seg===x[0]?'true':'false')+'">'+x[1]+'</button>';
+        }).join('')+'</div>'+
+        '<div class="actions" style="margin-top:12px">'+
+          '<button class="btn sm" id="repCsv">CSV 내려받기</button>'+
+          '<span style="flex:1"></span>'+
+          '<label style="display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)">'+
+            '<input type="checkbox" id="repNet" style="width:auto"'+(S.repNet?' checked':'')+'>'+
+            '행사 운영비에 지출결의서가 이미 포함됨</label>'+
+        '</div>'+
+        '<p class="hint" style="margin:8px 0 0">행사 운영비를 적을 때 그 행사의 지출결의서 금액까지 넣었다면 켜주세요. 끄면 두 번 빠집니다.</p>'+
+      '</section>'+
+
+      '<div class="tiles">'+
+        tile('수입', D.income?won(D.income):'—', D.anyDirect?'일부 행사는 직접 입력':esc(r.label))+
+        tile('운영비 · 세금', won(D.cost), '행사 운영비와 세금')+
+        tile('사례비 지급', won(D.fee), D.feePending?('미지급 '+won(D.feePending)):'지급 완료분')+
+        tile('지출결의서', won(D.own+D.looseTotal), D.exps.length+'건 지급')+
+        tile('손익', won(D.profit), D.profit<0?'적자':'남은 돈', D.profit<0)+
+      '</div>'+
+
+      '<section class="card"><h2>행사별 손익 — '+esc(r.label)+'</h2>'+
+        (evRows
+          ? '<div class="scroll"><table><thead><tr><th>행사</th><th class="num">수입</th><th class="num">운영비·세금</th>'+
+            '<th class="num">사례비</th><th class="num">지출결의서</th><th class="num">잔액</th></tr></thead><tbody>'+
+            evRows+
+            '<tr><th>합계</th><th class="num">'+(D.income?won(D.income):'—')+'</th><th class="num">'+won(D.cost)+'</th>'+
+            '<th class="num">'+won(D.fee)+'</th><th class="num">'+won(D.own)+'</th>'+
+            '<th class="num">'+won(D.profit+D.looseTotal)+'</th></tr>'+
+            '</tbody></table></div>'
+          : '<div class="empty"><strong>이 기간에 행사가 없습니다</strong>정산에 행사를 등록하면 여기에 모입니다.</div>')+
+        (D.anyDirect?'<p class="hint" style="margin-top:10px">잔여액을 직접 입력한 행사는 수입과 운영비를 따로 알 수 없어 수입 합계에서 빠집니다. 손익에는 잔여액이 그대로 반영됩니다.</p>':'')+
+      '</section>'+
+
+      '<section class="card"><h2>계정과목별 지출 — '+esc(r.label)+'</h2>'+
+        (accOrder.length
+          ? '<div class="scroll"><table><thead><tr><th>계정과목</th><th class="num">건수</th><th class="num">금액</th><th style="width:30%">비중</th></tr></thead><tbody>'+
+            accOrder.map(function(k){
+              var w=Math.max(2,Math.round(acc[k].v/(acc[accOrder[0]].v||1)*100));
+              return '<tr><td><b>'+esc(k)+'</b></td><td class="num">'+acc[k].n+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(acc[k].v)+'</td>'+
+                '<td><div style="height:9px;border-radius:5px;background:var(--line)">'+
+                  '<div style="height:9px;width:'+w+'%;border-radius:5px;background:var(--accent)"></div></div>'+
+                  '<span style="font-size:11px;color:var(--muted)">'+Math.round(acc[k].v/(accTotal||1)*100)+'%</span></td></tr>';
+            }).join('')+
+            '<tr><th>합계</th><th class="num">'+D.exps.length+'</th><th class="num" style="font-family:var(--font-num)">'+won(accTotal)+'</th><th></th></tr>'+
+            '</tbody></table></div>'
+          : '<div class="empty" style="padding:24px 8px">이 기간에 지급된 지출결의서가 없습니다.</div>')+
+        (D.looseTotal?'<div class="note n-info" style="margin:12px 0 0">행사에 연결되지 않은 지출 <b>'+won(D.looseTotal)+'</b> ('+D.loose.length+'건)이 손익에서 그대로 빠졌습니다.</div>':'')+
+      '</section>'+
+      '</div>';
+  }
+  function repCsv(){
+    var D=repData(), L=[];
+    function row(a){ return a.map(function(v){
+      v=String(v==null?'':v);
+      return /[",\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v;
+    }).join(','); }
+    L.push(row(['마이티블레싱 손익 보고서', D.r.label]));
+    L.push(row(['기간', D.r.from, '~', D.r.to]));
+    L.push('');
+    L.push(row(['행사','일자','수입','운영비·세금','사례비','지출결의서','잔액']));
+    D.rows.forEach(function(x){
+      L.push(row([x.e.name||'', x.e.date||'', x.direct?'':x.rev, x.direct?'':x.cost, x.fee, x.own, x.bal]));
+    });
+    L.push(row(['합계','',D.income,D.cost,D.fee,D.own,D.profit+D.looseTotal]));
+    L.push('');
+    L.push(row(['지급된 지출결의서']));
+    L.push(row(['지급일','문서번호','제목','행사','계정과목','지급수단','받는 사람','금액']));
+    D.exps.forEach(function(d){
+      var ev=d.eventId&&S.events[d.eventId];
+      L.push(row([String((d.pay||{}).at||'').slice(0,10), d.no||'', d.title||'', ev?(ev.name||''):'',
+                  d.account||'', METHODS[d.method]||'', d.payee||'', expTotal(d)]));
+    });
+    L.push('');
+    L.push(row(['손익', D.profit]));
+    /* 엑셀은 BOM 이 없으면 한글을 깨뜨린다. */
+    var blob=new Blob(['\ufeff'+L.join('\r\n')],{type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='마블 손익 '+D.r.label.replace(/\s/g,'')+'.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
+    flash('CSV를 내려받았습니다');
+  }
+
   /* ---- 역할 ---- */
   function renderRoles(){
-    var ids=Object.keys(S.roles), canCfg=S.me.canEdit;
+    var canCfg=S.me.canEdit;
+    loadAllowed();
     app.innerHTML=
-      '<p class="sub" style="color:var(--muted);margin:0 0 14px">회계 역할은 전원 승인해야 정산이 다음 단계로 넘어갑니다. 대표 승인은 1명으로 완료됩니다.</p>'+
-      (canCfg?'':'<div class="note n-info" style="margin:0 0 14px">역할은 소유자와 편집자만 바꿀 수 있습니다.</div>')+
-      '<div class="card"><h2>지정된 사람</h2>'+
-        (ids.length?'<div class="people">'+ids.map(function(u){
-          var pr=S.profiles[u]||{};
-          return '<div class="person"><img src="'+esc(avatarOf(u))+'" alt=""><span class="nm">'+esc(pr.name||'알 수 없는 사용자')+'</span>'+
-            '<select data-role-for="'+esc(u)+'"'+(canCfg?'':' disabled')+'>'+
-            ['member','accounting','ceo'].map(function(r){return '<option value="'+r+'"'+(S.roles[u]===r?' selected':'')+'>'+ROLE_LABEL[r]+'</option>';}).join('')+
-            '</select></div>';
-        }).join('')+'</div>':'<div class="empty" style="padding:24px 8px">아직 아무도 지정되지 않았습니다.</div>')+
-        (canCfg?'<h2 style="margin-top:18px">사람 추가</h2><div class="field"><input id="psearch" placeholder="이름으로 검색" autocomplete="off"></div><div class="people" id="presults"></div>':'')+
-      '</div>'+
+      memberCards()+
       '<div class="card" style="margin-top:14px"><h2>내 프로필 사진</h2>'+
         '<p class="hint" style="margin:0 0 12px">결재선과 목록에서 이름 옆에 보입니다. 가운데를 정사각으로 잘라 180px로 줄여서 보관합니다.</p>'+
         '<div class="sealbox">'+
@@ -1754,7 +2088,6 @@
         '</div>'+
         (canCfg?'':'<p class="hint" style="margin:10px 0 0">관리자만 등록할 수 있습니다.</p>')+
       '</div>';
-    if(canCfg){var b=$('#psearch'); b.addEventListener('focus',function(){roleSearch('');}); b.addEventListener('input',function(){roleSearch(b.value);});}
   }
   /* 올린 그림을 220px 정사각 PNG로 줄여서 config/seal 에 넣는다.
      원본을 그대로 담으면 문서 한 건이 수 MB가 되어 동기화가 느려진다. */
@@ -1878,18 +2211,6 @@
       .catch(function(e){ errbar('직인 저장 실패 — 관리자 권한이 있는지 확인해 주세요 ('+(e&&(e.code||e.message)||'')+')'); });
   }
 
-  function roleSearch(q){
-    if(!S.user||!S.user.search)return;
-    S.user.search(q).then(function(hits){
-      var el=$('#presults'); if(!el)return;
-      el.innerHTML=hits.filter(function(h){return !S.roles[h.id];}).map(function(h){
-        S.profiles[h.id]=h;
-        return '<div class="person"><img src="'+esc(avatarOf(h.id))+'" alt=""><span class="nm">'+esc(h.name)+'</span>'+
-          '<button class="btn sm" data-add="'+esc(h.id)+'">추가</button></div>';
-      }).join('');
-    });
-  }
-
   /* ============ 이벤트 ============ */
   document.addEventListener('click',function(e){
    try{
@@ -1919,6 +2240,19 @@
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
     if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
+    if((el=t.closest('[data-rseg]'))){ S.rep.seg=el.dataset.rseg; render(); return; }
+    if(t.id==='repCsv') return repCsv();
+    if(t.id==='memRefresh'){ S.allowed=null; refreshMembers(); loadAllowed(); flash('명단을 다시 읽었습니다'); return; }
+    if(t.id==='invCopy')  return copyInvite();
+    if(t.id==='urlCopy')  return put(JOIN_URL,'주소를 복사했습니다');
+    if(t.id==='invAdd')   return addAllowed();
+    if((el=t.closest('[data-alldel]'))) return removeAllowed(el.dataset.alldel);
+    if((el=t.closest('[data-admin]'))){ S.confirmAdmin=el.dataset.admin; render(); return; }
+    if(t.id==='admNo'){ S.confirmAdmin=null; render(); return; }
+    if((el=t.closest('[data-admyes]'))){
+      var au=el.dataset.admyes;
+      return setAdmin(au, !((S.members[au]||{}).role==='admin'));
+    }
     if(t.id==='sealDel') return saveSeal(null);
     if(t.id==='logoDel') return saveLogo(null);
     if(t.id==='avaDel')  return clearAvatar();
@@ -1979,7 +2313,6 @@
       if(map[t.id]){ ev[map[t.id][0]]=map[t.id][1]; touch('ev',ev.id); render(); return; }
     }
     if((el=t.closest('[data-act]'))&&ev) return settleAct(ev,el.dataset.act);
-    if((el=t.closest('[data-add]'))) return setRole(el.dataset.add,'member');
    }catch(err){ errbar('클릭 처리 중 '+(err&&err.message||err)); }
   });
 
@@ -2000,10 +2333,12 @@
       var dmap={dTitle:'title',dNo:'no',dDate:'date',dTo:'to',dCc:'cc',dSubject:'subject',dSigner:'signer',
                 dAddr:'addr',dTel1:'tel1',dTel2:'tel2',dEmail:'email'};
       if(dmap[t.id]){ dc[dmap[t.id]]=t.value; touch('doc',dc.id); return; }
+      if(t.id==='invMail'){ S.inviteMail=t.value; return; }
       if(t.dataset&&t.dataset.dp!==undefined){ dc.paras[+t.dataset.dp]=t.value; touch('doc',dc.id); return; }
       if(t.dataset&&t.dataset.ovk!==undefined){ dc.ov[+t.dataset.ovk].k=t.value; touch('doc',dc.id); return; }
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
+    if(t.id==='invMail'){ S.inviteMail=t.value; return; }
     var ev=S.sel&&S.events[S.sel]; if(!ev)return;
     if(t.dataset&&t.dataset.f!==undefined){
       var i=+t.dataset.i,fl=t.dataset.f;
@@ -2050,6 +2385,9 @@
     if(xd&&xd.type!=='expense'&&t.id==='dScope'){
       xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); render(); return;
     }
+    if(t.id==='repY'){ S.rep.y=+t.value; render(); return; }
+    if(t.id==='repM'){ S.rep.seg=t.value||'all'; render(); return; }
+    if(t.id==='repNet'){ S.repNet=t.checked; render(); return; }
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
   });
@@ -2149,7 +2487,8 @@
   function setRole(uid,role){
     if(!S.db)return;
     var next={}; Object.keys(S.roles).forEach(function(k){next[k]=S.roles[k];});
-    next[uid]=role;
+    /* 팀원은 기본값이다. 명단에 남겨 둘 이유가 없다. */
+    if(role==='member') delete next[uid]; else next[uid]=role;
     S.db.doc('config/roles').set({map:next}).catch(function(e){errbar('역할 저장 실패 '+(e&&e.code||''));});
   }
   function copyTable(ev){
@@ -2478,6 +2817,7 @@
           var map={};
           if(m.error) errbar('구성원을 불러오지 못했습니다: '+m.error.message);
           (m.data||[]).forEach(function(row){ map[row.uid]={email:row.email,name:row.name,role:row.role,createdAt:row.created_at}; });
+          S.members=map;
           wire(sbStore(sb), sbUser(session,map));
         });
       });
@@ -2508,6 +2848,10 @@
   function startDemo(){
     if(S.demo) return;
     S.demo=true; demoBanner();
+    Object.keys(DEMO_NAMES).forEach(function(u){
+      S.members[u]={email:u+'@mightyblessing.com',name:DEMO_NAMES[u],
+        role:u==='demo-me'?'admin':'member',createdAt:'2026-01-01T00:00:00.000Z'};
+    });
     wire(demoStore(), demoUser());
   }
   function wire(db,user){
