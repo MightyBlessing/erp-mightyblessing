@@ -7,7 +7,7 @@
 <script src="config.js"></script>
 </head>
 <body>
-<title>마블 ERP</title>
+<title>마이티블레싱 업무관리시스템</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/pretendard@1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.css">
 <style>
@@ -67,7 +67,8 @@
     height:100vh; display:flex; flex-direction:column; border-right:1px solid var(--line);
     padding-top:env(safe-area-inset-top,0px); padding-left:env(safe-area-inset-left,0px)}
   .rail .logo{padding:18px 18px 14px; color:#fff; font-weight:700; font-size:15px; letter-spacing:-.01em}
-  .rail .logo small{display:block; font-weight:400; font-size:11px; color:var(--rail-ink); letter-spacing:.06em; margin-top:2px}
+  .rail .logo small{display:block; font-weight:400; font-size:11px; color:var(--rail-ink);
+    letter-spacing:.01em; margin-top:3px; white-space:nowrap}
   .rail nav{display:flex; flex-direction:column; gap:2px; padding:4px 10px; overflow-y:auto}
   .rail button{display:flex; align-items:center; gap:9px; border:0; background:transparent; color:var(--rail-ink);
     font-family:inherit; font-size:13.5px; font-weight:500; letter-spacing:-.01em;
@@ -115,6 +116,10 @@
   .orline::before,.orline::after{content:""; flex:1; height:1px; background:var(--line)}
   .linkbtn{border:0; background:transparent; color:var(--accent-ink); font-family:inherit;
     font-size:12.5px; font-weight:600; cursor:pointer; padding:0; text-decoration:underline}
+
+  /* 알림에서 넘어온 사람 줄을 잠깐 짚어준다 */
+  tr.focusrow > td{background:var(--accent-soft)}
+  tr.focusrow > td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 
   /* ---- 증빙 ---- */
   .evgrid{display:grid; grid-template-columns:repeat(auto-fill,minmax(124px,1fr)); gap:10px}
@@ -387,12 +392,12 @@
 
 <div class="shell">
   <aside class="rail">
-    <div class="logo">마블 ERP<small>MIGHTY BLESSING</small></div>
+    <div class="logo">마이티블레싱<small>업무관리시스템</small></div>
     <nav id="nav"></nav>
     <div class="foot">정산 · 전자결재 · 회계<br>마이티블레싱</div>
   </aside>
   <div class="main">
-    <div class="bar"><h1 id="ptitle">마블 ERP</h1>
+    <div class="bar"><h1 id="ptitle">업무관리시스템</h1>
       <span class="bellwrap"><button type="button" class="bell" id="bellBtn" aria-label="알림" aria-expanded="false" hidden></button></span>
       <span class="who" id="who"></span></div>
     <div class="page" id="app"><div class="card"><div class="empty"><strong>불러오는 중</strong>잠시만 기다려 주세요.</div></div></div>
@@ -463,7 +468,7 @@
     view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
-    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null};
+    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -686,7 +691,7 @@
     Object.keys(S.profileRows).forEach(function(u){m[u]=1;});
     return Object.keys(m);
   }
-  function notify(to,text,docId){
+  function notify(to,text,docId,go){
     if(!S.db||!S.me.id)return;
     var list;
     if(to==='*'){ list='*'; }
@@ -697,8 +702,9 @@
       if(!list.length)return;
     }
     var id='n'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
-    S.db.doc('notifs/'+id).set({to:list,text:text,doc:docId||'',by:S.me.id,at:nowISO()})
-      .catch(function(){});
+    var row={to:list,text:text,doc:docId||'',by:S.me.id,at:nowISO()};
+    if(go) row.go=go;
+    S.db.doc('notifs/'+id).set(row).catch(function(){});
     pruneNotifs();
   }
   /* 90일이 지난 알림은 지운다. 아무도 안 치우면 영원히 쌓인다. */
@@ -755,7 +761,8 @@
     if(rows[S.me.id])return;
     var fresh=!S.me.joinedAt || (Date.now()-Date.parse(S.me.joinedAt))<14*86400000;
     saveProfile({avatar:'',joinedAt:nowISO(),notifReadAt:nowISO()}).then(function(){
-      if(fresh) notify('*', (S.me.name||'새 사용자')+' 님이 마블 ERP에 합류했습니다', '');
+      if(fresh) notify('*', (S.me.name||'새 사용자')+' 님이 합류했습니다. 역할을 지정해 주세요.',
+                       '', {v:'roles', uid:S.me.id});
     }).catch(function(){});
   }
   function docLabel(d){ return (d.subject||d.title||'문서'); }
@@ -960,12 +967,24 @@
       lg.setAttribute('title','대시보드로');
       lg.setAttribute('data-home','1');
       var want='<img src="'+esc(S.logo||LOGO_FALLBACK)+'" alt="마이티블레싱" '+
-        'onerror="this.parentNode.innerHTML=\'마블 ERP<small>MIGHTY BLESSING</small>\'"><small>ERP</small>';
+        'onerror="this.parentNode.innerHTML=\'마이티블레싱<small>업무관리시스템</small>\'"><small>업무관리시스템</small>';
       if(lg.innerHTML!==want) lg.innerHTML=want;
     }
     var t=$('#ptitle');
-    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',report:'손익 보고서',roles:'역할'}[S.view]||'마블 ERP';
+    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',report:'손익 보고서',roles:'역할'}[S.view]||'업무관리시스템';
     renderBell();
+    renderWho();
+  }
+  function renderWho(){
+    var w=$('#who'); if(!w)return;
+    if(!S.me.id){ if(w.innerHTML)w.innerHTML=''; return; }
+    var av=avatarOf(S.me.id), nm=(S.me.name||'익명')+' · '+ROLE_LABEL[myRole()];
+    /* 사진은 data: 주소라 길다. 통째로 비교하면 매번 문자열을 복사한다. */
+    var key=av.length+'·'+av.slice(-20)+'·'+nm+'·'+(S.sb?1:0);
+    if(w.getAttribute('data-k')===key) return;
+    w.setAttribute('data-k',key);
+    w.innerHTML='<img alt="" src="'+esc(av)+'"><span>'+esc(nm)+'</span>'+
+      (S.sb?'<button class="btn sm" id="signOut" style="margin-left:6px">로그아웃</button>':'');
   }
   function renderBell(){
     var b=$('#bellBtn'), pn=$('#bellPanel'); if(!b||!pn)return;
@@ -980,8 +999,9 @@
     var list=notifsFor(), rd=S.notifReadAt||'';
     pn.innerHTML='<h3>알림'+(n?'<button type="button" id="nAllRead">모두 읽음</button>':'')+'</h3>'+
       (list.length?list.map(function(x){
-        return '<button type="button" class="nrow'+((x.at||'')>rd?' unread':'')+'"'+
-          (x.doc?' data-ngo="'+esc(x.doc)+'"':'')+'>'+
+        var tgt=x.doc?' data-ngo="'+esc(x.doc)+'"'
+               :(x.go&&x.go.v==='roles')?' data-nrole="'+esc(x.go.uid||'')+'"':'';
+        return '<button type="button" class="nrow'+((x.at||'')>rd?' unread':'')+'"'+tgt+'>'+
           '<span class="mark"></span><span class="tx">'+esc(x.text)+
           '<span class="tm">'+esc(shortTime(x.at))+'</span></span></button>';
       }).join('')
@@ -1825,7 +1845,7 @@
     });
   }
   function copyInvite(){
-    put('마이티블레싱 ERP에 들어오세요.\n\n'+JOIN_URL+'\n\n'+
+    put('마이티블레싱 업무관리시스템에 들어오세요.\n\n'+JOIN_URL+'\n\n'+
         '위 주소를 열고 회사 이메일(@mightyblessing.com)을 넣으면 로그인 링크가 메일로 갑니다. '+
         '비밀번호는 없습니다. 한 번 들어오면 그 브라우저에서는 계속 로그인된 상태로 남습니다.',
         '초대 문구를 복사했습니다');
@@ -1845,7 +1865,8 @@
             '<button class="btn sm" id="admNo" style="margin-left:5px">취소</button>';
       else adm='<button class="btn sm'+(m.admin?' primary':'')+'" data-admin="'+esc(m.uid)+'">'+
             (m.admin?'관리자':'일반')+'</button>';
-      return '<tr><td><div style="display:flex;align-items:center;gap:8px">'+
+      return '<tr'+(S.roleFocus===m.uid?' class="focusrow" data-urow="'+esc(m.uid)+'"':'')+
+        '><td><div style="display:flex;align-items:center;gap:8px">'+
           '<img src="'+esc(avatarOf(m.uid))+'" alt="" style="width:26px;height:26px;border-radius:50%">'+
           '<span><b>'+esc(m.name)+'</b>'+(m.uid===S.me.id?' <span style="color:var(--muted);font-size:11.5px">(나)</span>':'')+
           '<div style="font-size:12px;color:var(--muted)">'+esc(m.email)+'</div></span></div></td>'+
@@ -2075,6 +2096,7 @@
   function renderRoles(){
     var canCfg=S.me.canEdit;
     loadAllowed();
+    var focus=S.roleFocus;
     app.innerHTML=
       memberCards()+
       '<div class="card" style="margin-top:14px"><h2>내 프로필 사진</h2>'+
@@ -2104,6 +2126,10 @@
         '</div>'+
         (canCfg?'':'<p class="hint" style="margin:10px 0 0">관리자만 등록할 수 있습니다.</p>')+
       '</div>';
+    if(focus){
+      var row=$('[data-urow="'+focus+'"]');
+      if(row&&row.scrollIntoView) row.scrollIntoView({block:'center'});
+    }
   }
   /* 올린 그림을 220px 정사각 PNG로 줄여서 config/seal 에 넣는다.
      원본을 그대로 담으면 문서 한 건이 수 MB가 되어 동기화가 느려진다. */
@@ -2243,10 +2269,14 @@
       else { errbar('그 문서는 더 이상 없습니다'); renderBell(); }
       return;
     }
+    if((el=t.closest('[data-nrole]'))){
+      S.bellOpen=false; markNotifsRead();
+      S.view='roles'; S.roleFocus=el.dataset.nrole||null; remember(); render(); return;
+    }
     if(t.id==='nAllRead'){ markNotifsRead(); renderBell(); return; }
     if(S.bellOpen&&!t.closest('#bellPanel')){ S.bellOpen=false; markNotifsRead(); renderBell(); }
     if(t.closest('[data-home]')){ goHome(); return; }
-    if((el=t.closest('[data-nav]'))){ S.view=el.dataset.nav; S.sel=null; S.docSel=null; S.confirmDel=null; S.confirmDocDel=null; remember(); render(); return; }
+    if((el=t.closest('[data-nav]'))){ S.view=el.dataset.nav; S.sel=null; S.docSel=null; S.confirmDel=null; S.confirmDocDel=null; S.roleFocus=null; remember(); render(); return; }
     if((el=t.closest('[data-go]'))){
       var g=el.dataset.go;
       if(g.indexOf('doc:')===0){ S.view='docs'; S.docSel=g.slice(4); }
@@ -2883,7 +2913,7 @@
         '<p class="hint" style="margin:8px 0 0;text-align:center">회사 Google 계정이 없는 외부 인력용입니다.</p>';
     }
     app.innerHTML='<div style="max-width:400px;margin:40px auto"><div class="card">'+
-      '<h2 style="margin-bottom:6px">마블 ERP</h2>'+body+'</div></div>';
+      '<h2 style="margin-bottom:6px">마이티블레싱 업무관리시스템</h2>'+body+'</div></div>';
 
     if(stage==='sent'){
       var ob=$('#otpCode'), og=$('#otpGo');
@@ -3027,12 +3057,6 @@
         S.user.me().then(function(me){
           S.me.id=me.id;S.me.name=me.name;S.me.avatarUrl=me.avatarUrl;S.me.canEdit=me.canEdit;S.me.isOwner=me.isOwner;S.me.joinedAt=me.joinedAt||null;
           syncMyProfile();
-          var w=$('#who');
-          if(w){
-            w.innerHTML='<img alt=""><span></span>'+(S.sb?'<button class="btn sm" id="signOut" style="margin-left:6px">로그아웃</button>':'');
-            w.querySelector('img').src=avatarOf(me.id);
-            w.querySelector('span').textContent=(me.name||'익명')+' · '+ROLE_LABEL[myRole()];
-          }
           render();
         });
         S.user.can('data.write').then(function(v){S.canWrite=v;render();});
