@@ -382,6 +382,7 @@
 </style>
 
 <div id="printroot" aria-hidden="true"></div>
+<datalist id="plist"></datalist>
 
 <div class="shell">
   <aside class="rail">
@@ -468,7 +469,8 @@
     view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
-    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null};
+    members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,
+    people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -990,6 +992,17 @@
     if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',report:'손익 보고서',roles:'역할'}[S.view]||'업무관리시스템';
     renderBell();
     renderWho();
+    renderPeopleList();
+  }
+  /* 정산표 이름칸이 쓰는 목록. 화면마다 다시 만들지 않고 한 장만 둔다. */
+  function renderPeopleList(){
+    var dl=document.getElementById('plist'); if(!dl)return;
+    var key=Object.keys(S.people).length+'|'+peopleList().map(function(p){return p.name;}).join(',');
+    if(dl.getAttribute('data-k')===key) return;
+    dl.setAttribute('data-k',key);
+    dl.innerHTML=peopleList().map(function(p){
+      return '<option value="'+esc(p.name||'')+'">';
+    }).join('');
   }
   function renderWho(){
     var w=$('#who'); if(!w)return;
@@ -1579,10 +1592,204 @@
     });
   }
 
+  /* ---- 인력 (지급 대상자) ----
+     정산표의 사람이 지금까지 '이름 글자'였다. "김민수"와 "김민수 "가 다른 사람이 되고,
+     그러면 한 사람에게 여러 번 지급된 걸 합쳐서 신고할 수가 없다.
+     여기 한 번 등록해 두고, 정산표는 그 사람을 가리키기만 한다.
+     로그인하는 구성원(members)과는 다른 명부다 — 외부 스태프는 로그인하지 않는다. */
+  function peopleList(){
+    return Object.keys(S.people).map(function(k){ var o=clone(S.people[k]); o.id=k; return o; })
+      .sort(function(a,b){ return (a.name||'').localeCompare(b.name||'','ko'); });
+  }
+  function personName(pid){ var p=S.people[pid]; return (p&&p.name)||''; }
+  /* 같은 이름이 둘이면 누구인지 알 수 없다. 그럴 땐 사람이 직접 고르게 둔다. */
+  function personByName(nm){
+    nm=String(nm||'').trim(); if(!nm) return null;
+    var hit=peopleList().filter(function(p){ return (p.name||'').trim()===nm; });
+    return hit.length===1?hit[0]:null;
+  }
+  function dupNames(){
+    var c={}, out={};
+    peopleList().forEach(function(p){
+      var n=(p.name||'').trim(); if(!n)return;
+      c[n]=(c[n]||0)+1; if(c[n]>1) out[n]=c[n];
+    });
+    return out;
+  }
+  /* 아직 사람에 연결되지 않은 이름들. 과거 정산표가 여기 걸린다. */
+  function unlinkedNames(){
+    var m={};
+    Object.keys(S.events).forEach(function(k){
+      (S.events[k].members||[]).forEach(function(x){
+        var n=String(x&&x.n||'').trim();
+        if(!n||x.pid) return;
+        if(personByName(n)) return;      /* 이름이 이미 명부에 있으면 연결만 하면 된다 */
+        m[n]=(m[n]||0)+1;
+      });
+    });
+    return Object.keys(m).sort(function(a,b){return a.localeCompare(b,'ko');})
+      .map(function(n){ return {n:n, c:m[n]}; });
+  }
+  function usedCount(pid,nm){
+    var c=0;
+    Object.keys(S.events).forEach(function(k){
+      (S.events[k].members||[]).forEach(function(x){
+        if(x.pid===pid || (!x.pid && String(x.n||'').trim()===nm)) c++;
+      });
+    });
+    return c;
+  }
+  function savePerson(id,body){
+    if(!S.db) return Promise.resolve();
+    var ref=id?S.db.doc('people/'+id):S.db.collection('people').doc();
+    body.updatedAt=nowISO(); if(!id) body.createdAt=nowISO();
+    return ref.set(body).then(function(){ return ref.id; });
+  }
+  /* 명부에 있는 이름과 정산표의 이름을 이어 붙인다.
+     미루면 행사를 치를 때마다 이어 붙일 양이 늘어난다. */
+  function linkAll(){
+    if(!S.db||S.linking)return;
+    S.linking=true; render();
+    var jobs=[];
+    Object.keys(S.events).forEach(function(k){
+      var ev=S.events[k], hit=false;
+      (ev.members||[]).forEach(function(x){
+        if(x.pid) return;
+        var pp=personByName(x.n);
+        if(pp){ x.pid=pp.id; x.n=pp.name; hit=true; }
+      });
+      if(hit) jobs.push(k);
+    });
+    var seq=Promise.resolve(), done=0;
+    jobs.forEach(function(k){
+      seq=seq.then(function(){
+        var body=clone(S.events[k]); delete body.id; body.updatedAt=nowISO();
+        return S.db.doc('events/'+k).set(body).then(function(){ done++; });
+      }).catch(function(){});
+    });
+    seq.then(function(){
+      S.linking=false;
+      flash(done?(done+'개 행사의 이름을 명부에 이어 붙였습니다'):'이어 붙일 것이 없습니다');
+      render();
+    });
+  }
+  /* 미등록 이름을 한 번에 명부로 올린다. 올린 뒤 바로 이어 붙인다. */
+  function registerAll(){
+    if(!S.db||S.linking)return;
+    var list=unlinkedNames(); if(!list.length)return;
+    S.linking=true; render();
+    var seq=Promise.resolve();
+    list.forEach(function(x){
+      seq=seq.then(function(){
+        return savePerson(null,{name:x.n,phone:'',bank:'',acct:'',taxRole:'',note:''});
+      }).catch(function(){});
+    });
+    seq.then(function(){
+      S.linking=false;
+      flash(list.length+'명을 명부에 올렸습니다. 이어 붙입니다.');
+      /* 구독이 새 사람을 내려줄 틈을 준다 */
+      setTimeout(linkAll,600);
+    });
+  }
+  function removePerson(id){
+    if(!S.db)return;
+    S.db.doc('people/'+id).delete()
+      .then(function(){ S.personDel=null; flash('명부에서 지웠습니다'); render(); })
+      .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+  }
+
+  var TAX_HINT=['미디어크리에이터','행사도우미','강사','공연출연','기타'];
+
+  function renderPeople(){
+    var L=peopleList(), q=(S.peopleQ||'').trim();
+    if(q) L=L.filter(function(p){
+      return (p.name||'').indexOf(q)>=0 || (p.taxRole||'').indexOf(q)>=0 || (p.phone||'').indexOf(q)>=0;
+    });
+    var dups=dupNames(), un=unlinkedNames();
+    var ed=S.personEdit, cur=(ed&&ed!=='new')?(S.people[ed]||{}):{};
+
+    var form='';
+    if(ed){
+      form='<section class="card" style="margin-bottom:14px"><h2>'+(ed==='new'?'새 사람':'고치기')+'</h2>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="pfName">이름</label><input id="pfName" value="'+esc(cur.name||'')+'" placeholder="홍길동"></div>'+
+          '<div class="field"><label for="pfPhone">연락처</label><input id="pfPhone" value="'+esc(cur.phone||'')+'" placeholder="010-0000-0000"></div>'+
+        '</div>'+
+        '<div class="field"><label for="pfTax">세무 구분</label>'+
+          '<input id="pfTax" list="taxhint" value="'+esc(cur.taxRole||'')+'" placeholder="지급명세서에 신고하는 역할">'+
+          '<datalist id="taxhint">'+TAX_HINT.map(function(t){return '<option value="'+esc(t)+'">';}).join('')+'</datalist></div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="pfBank">은행</label><input id="pfBank" value="'+esc(cur.bank||'')+'"></div>'+
+          '<div class="field"><label for="pfAcct">계좌번호</label><input id="pfAcct" value="'+esc(cur.acct||'')+'"></div>'+
+        '</div>'+
+        '<div class="field"><label for="pfNote">비고</label><input id="pfNote" value="'+esc(cur.note||'')+'" placeholder="세금신고 특이사항 등"></div>'+
+        '<div class="actions"><button class="btn primary" id="pfSave">저장</button>'+
+          '<button class="btn" id="pfCancel">취소</button></div>'+
+        '<p class="hint" style="margin-top:10px">주민등록번호는 아직 받지 않습니다. 법상 암호화해서 보관해야 해서, 넣을지부터 정하고 붙이겠습니다.</p>'+
+      '</section>';
+    }
+
+    var rows=L.map(function(p){
+      var used=usedCount(p.id,(p.name||'').trim());
+      return '<tr>'+
+        '<td><b>'+esc(p.name||'(이름 없음)')+'</b>'+
+          (dups[(p.name||'').trim()]?' <span class="pill p-rejected">이름 겹침</span>':'')+
+          (p.phone?'<div style="font-size:12px;color:var(--muted)">'+esc(p.phone)+'</div>':'')+'</td>'+
+        '<td>'+(p.taxRole?esc(p.taxRole):'<span style="color:var(--zero)">—</span>')+'</td>'+
+        '<td style="color:var(--muted)">'+(p.bank?esc(p.bank)+' '+esc(p.acct||''):'—')+'</td>'+
+        '<td class="num">'+used+'</td>'+
+        '<td style="width:120px">'+
+          (S.personDel===p.id
+            ? '<button class="btn danger sm" data-pyes="'+esc(p.id)+'">삭제</button>'+
+              '<button class="btn sm" id="pNo" style="margin-left:5px">취소</button>'
+            : '<button class="btn sm" data-pedit="'+esc(p.id)+'">고치기</button>'+
+              '<button class="del" data-pdel="'+esc(p.id)+'" aria-label="삭제" style="margin-left:4px">×</button>')+
+        '</td></tr>';
+    }).join('');
+
+    app.innerHTML=
+      settleTabs()+
+      (un.length
+        ? '<div class="note n-warn" style="margin:0 0 14px">'+
+            '<b>명부에 없는 이름이 '+un.length+'명</b> 있습니다 — '+
+            esc(un.slice(0,6).map(function(x){return x.n;}).join(', '))+(un.length>6?' 외':'')+'<br>'+
+            '지금 정산표의 사람은 글자일 뿐이라 같은 사람에게 여러 번 지급한 걸 합칠 수 없습니다. '+
+            '한 번에 올려두면 앞으로 이름을 고를 수 있습니다.'+
+            '<div class="actions" style="margin-top:10px">'+
+              '<button class="btn primary sm" id="pRegAll"'+(S.linking?' disabled':'')+'>'+
+                (S.linking?'올리는 중…':un.length+'명 한 번에 올리기')+'</button></div>'+
+          '</div>'
+        : '')+
+      form+
+      '<div class="actions" style="margin-bottom:14px">'+
+        '<button class="btn primary" id="pNew"'+(writable()?'':' disabled')+'>+ 새 사람</button>'+
+        '<button class="btn" id="pLink"'+(S.linking?' disabled':'')+'>이름 이어 붙이기</button>'+
+        '<span style="flex:1"></span>'+
+        '<input id="pQ" placeholder="이름으로 찾기" value="'+esc(S.peopleQ||'')+'" style="max-width:200px">'+
+      '</div>'+
+      '<div class="card">'+(rows
+        ? '<div class="scroll"><table><thead><tr><th>이름</th><th>세무 구분</th><th>계좌</th><th class="num">참여</th><th></th></tr></thead><tbody>'+rows+'</tbody></table></div>'
+        : '<div class="empty"><strong>'+(q?'찾는 사람이 없습니다':'아직 명부가 비어 있습니다')+'</strong>'+
+          (q?'':'행사에 참여하는 사람을 여기 한 번 올려두면, 정산표에서 이름을 고르기만 하면 됩니다.')+'</div>')+
+      '</div>';
+
+    var qb=$('#pQ');
+    if(qb) qb.addEventListener('input',function(){ S.peopleQ=qb.value; renderPeople(); $('#pQ').focus(); });
+  }
+  function settleTabs(){
+    return '<div class="tabs" style="margin:0 0 14px">'+
+      [['events','행사'],['people','인력']].map(function(x){
+        return '<button type="button" data-stab="'+x[0]+'" aria-pressed="'+(S.setTab===x[0]?'true':'false')+'">'+x[1]+
+          (x[0]==='people'?'<span class="n">'+Object.keys(S.people).length+'</span>':'')+'</button>';
+      }).join('')+'</div>';
+  }
+
   /* ---- 정산 (보존) ---- */
   function renderSettleList(){
+    if(S.setTab==='people') return renderPeople();
     var ids=Object.keys(S.events).sort(function(a,b){return (S.events[b].date||'')<(S.events[a].date||'')?-1:1;});
     app.innerHTML=
+      settleTabs()+
       '<div class="actions" style="margin-bottom:14px"><button class="btn primary" id="newEv"'+(writable()?'':' disabled')+'>+ 새 행사</button></div>'+
       '<div class="card">'+(ids.length?
         '<div class="scroll"><table><thead><tr><th>행사</th><th>상태</th><th class="num">잔여액</th><th class="num">지급 합계</th></tr></thead><tbody>'+
@@ -1599,7 +1806,9 @@
     var rows=(ev.members||[]).map(function(m,i){
       var day=m.w?c.rate:0,prep=c.alloc[i],pay=day+prep;
       return '<tr class="'+(pay===0?'off':'')+'">'+
-        '<td><input data-f="n" data-i="'+i+'" value="'+esc(m.n)+'" style="width:68px;padding:4px 6px"'+dis+'></td>'+
+        '<td><input data-f="n" data-i="'+i+'" list="plist" value="'+esc(m.n)+'" '+
+          'style="width:84px;padding:4px 6px'+(m.pid?'':';border-color:var(--warn)')+'" '+
+          (m.pid?'title="명부: '+esc(personName(m.pid)||'')+'"':'title="명부에 없는 이름입니다"')+dis+'></td>'+
         '<td><textarea data-f="p" data-i="'+i+'" class="desc" rows="2"'+dis+'>'+esc(m.p)+'</textarea></td>'+
         '<td><input data-f="r" data-i="'+i+'" value="'+esc(m.r)+'" style="min-width:140px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td style="text-align:center"><input type="checkbox" class="chk" data-f="w" data-i="'+i+'"'+(m.w?' checked':'')+dis+'></td>'+
@@ -2336,6 +2545,30 @@
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
     if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
+    if((el=t.closest('[data-stab]'))){ S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); return; }
+    if(t.id==='pNew'){ S.personEdit='new'; render(); return; }
+    if(t.id==='pCancel'||t.id==='pfCancel'){ S.personEdit=null; render(); return; }
+    if((el=t.closest('[data-pedit]'))){ S.personEdit=el.dataset.pedit; render(); return; }
+    if((el=t.closest('[data-pdel]'))){ S.personDel=el.dataset.pdel; render(); return; }
+    if(t.id==='pNo'){ S.personDel=null; render(); return; }
+    if((el=t.closest('[data-pyes]'))) return removePerson(el.dataset.pyes);
+    if(t.id==='pRegAll') return registerAll();
+    if(t.id==='pLink')   return linkAll();
+    if(t.id==='pfSave'){
+      var nm=($('#pfName')&&$('#pfName').value||'').trim();
+      if(!nm) return errbar('이름을 넣어주세요');
+      var body={name:nm,
+        phone:($('#pfPhone')&&$('#pfPhone').value||'').trim(),
+        taxRole:($('#pfTax')&&$('#pfTax').value||'').trim(),
+        bank:($('#pfBank')&&$('#pfBank').value||'').trim(),
+        acct:($('#pfAcct')&&$('#pfAcct').value||'').trim(),
+        note:($('#pfNote')&&$('#pfNote').value||'').trim()};
+      var id=S.personEdit==='new'?null:S.personEdit;
+      if(id){ var old=S.people[id]||{}; body.createdAt=old.createdAt||nowISO(); }
+      savePerson(id,body).then(function(){ S.personEdit=null; flash('명부에 저장했습니다'); render(); })
+        .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
+      return;
+    }
     if((el=t.closest('[data-rseg]'))){ S.rep.seg=el.dataset.rseg; render(); return; }
     if(t.id==='repCsv') return repCsv();
     if(t.id==='memRefresh'){ S.allowed=null; refreshMembers(); loadAllowed(); flash('명단을 다시 읽었습니다'); return; }
@@ -2403,7 +2636,7 @@
     if(t.id==='delYes') return removeEvent();
     var ev=S.sel&&S.events[S.sel];
     if((el=t.closest('[data-del]'))&&ev){ ev.members.splice(+el.dataset.del,1); touch('ev',ev.id); render(); return; }
-    if(t.id==='addRow'&&ev){ ev.members=(ev.members||[]).concat([{n:'이름',p:'',r:'',w:false,pt:0}]); touch('ev',ev.id); render(); return; }
+    if(t.id==='addRow'&&ev){ ev.members=(ev.members||[]).concat([{n:'',pid:'',p:'',r:'',w:false,pt:0}]); touch('ev',ev.id); render(); return; }
     if(t.id==='copy'&&ev) return copyTable(ev);
     if(ev&&!saving){
       var map={mDirect:['mode','direct'],mCalc:['mode','calc'],sOpex:['wageSrc','opex'],sFund:['wageSrc','fund'],
@@ -2444,6 +2677,11 @@
       if(fl==='w')ev.members[i].w=t.checked;
       else if(fl==='pt')ev.members[i].pt=+t.value;
       else ev.members[i][fl]=t.value;
+      if(fl==='n'){
+        var pp=personByName(t.value);
+        if(pp){ ev.members[i].pid=pp.id; t.style.borderColor=''; t.title='명부: '+pp.name; }
+        else  { delete ev.members[i].pid; t.style.borderColor='var(--warn)'; t.title='명부에 없는 이름입니다'; }
+      }
       touch('ev',ev.id); if(fl==='w'||fl==='pt')render(); return;
     }
     var fmap={evName:'name',evDate:'date',evPlace:'place',net:'net',rev:'rev',opex:'opex',tax:'tax',rate:'rate',ratio:'ratio',cap:'cap',unit:'unit'};
@@ -3165,6 +3403,11 @@
         S.avatars=av; S.profileRows=rows; S.profilesLoaded=true;
         syncMyProfile();
         render();
+      },function(){});
+
+      S.db.collection('people').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.people=next; render();
       },function(){});
 
       S.db.collection('notifs').onSnapshot(function(snap){
