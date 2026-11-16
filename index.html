@@ -484,6 +484,7 @@
     view:'dash',sel:null,docSel:null,docTab:'mine',acctTab:'pending',acctBy:'event',confirmPay:null,payMemo:'',payOn:'',logo:null,avatars:{},newPanel:null,loading:true,stale:false,fatal:null,confirmDel:null,confirmDocDel:null,demo:false,sb:null,seal:null,
     notifs:{},profileRows:{},myProfile:null,notifReadAt:'',bellOpen:false,confirmFile:null,upBusy:false,profilesLoaded:false,
     rep:{y:new Date().getFullYear(),seg:'all'},repNet:false,loginMail:'',
+    repTab:'pl',whYm:'',wh:{},whEdit:null,
     members:{},allowed:null,inviteMail:'',busyUid:null,confirmAdmin:null,roleFocus:null,memberEdit:null,
     people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false};
 
@@ -1808,21 +1809,26 @@
   function linkAll(){
     if(!S.db||S.linking)return;
     S.linking=true; render();
+    /* 고칠 내용을 먼저 전부 떠낸 다음에 쓴다.
+       한 건을 쓸 때마다 저장소가 구독자를 깨우고, 그러면 S.events 가
+       저장된 내용으로 통째로 갈린다. 메모리에서 고쳐만 두고 아직 안 쓴
+       행사들은 그때 되돌아가 버린다. 첫 행사만 이어 붙던 이유다. */
     var jobs=[];
     Object.keys(S.events).forEach(function(k){
-      var ev=S.events[k], hit=false;
+      var ev=clone(S.events[k]), hit=false;
       (ev.members||[]).forEach(function(x){
         if(x.pid) return;
         var pp=personByName(x.n);
         if(pp){ x.pid=pp.id; x.n=pp.name; hit=true; }
       });
-      if(hit) jobs.push(k);
+      if(!hit) return;
+      delete ev.id; ev.updatedAt=nowISO();
+      jobs.push({k:k, body:ev});
     });
     var seq=Promise.resolve(), done=0;
-    jobs.forEach(function(k){
+    jobs.forEach(function(j){
       seq=seq.then(function(){
-        var body=clone(S.events[k]); delete body.id; body.updatedAt=nowISO();
-        return S.db.doc('events/'+k).set(body).then(function(){ done++; });
+        return S.db.doc('events/'+j.k).set(j.body).then(function(){ done++; });
       }).catch(function(){});
     });
     seq.then(function(){
@@ -1847,7 +1853,7 @@
     seq.then(function(){
       S.linking=false;
       flash(list.length+'명을 명부에 올렸습니다');
-      setTimeout(linkAll,600);
+      setTimeout(linkAll,900);
     });
   }
   function registerAll(){
@@ -1864,7 +1870,7 @@
       S.linking=false;
       flash(list.length+'명을 명부에 올렸습니다. 이어 붙입니다.');
       /* 구독이 새 사람을 내려줄 틈을 준다 */
-      setTimeout(linkAll,600);
+      setTimeout(linkAll,900);
     });
   }
   function removePerson(id){
@@ -2444,7 +2450,226 @@
       own:sum(function(x){return x.own;}),
       profit:sum(function(x){return x.bal;})-looseTotal};
   }
+  /* ============ 원천세 · 지급명세서 ============
+     준철님 방식 그대로다.
+       · 당월 1일~말일에 '이체'된 인건비를 행사 건별로 모은다 (이체일 기준)
+       · 원천세 — 총 인원(인원중복 포함) / 총 지급액 / 국세 3% / 지방세 0.3%
+       · 지급명세서 — 한 사람에게 여러 번 지급된 건 합쳐서 한 줄
+       · 특이사항은 비고에 적는다
+     주민등록번호는 넣지 않는다. 준철님이 따로 관리하신다. */
+  var INC_RATE=0.03, LOC_RATE=0.003;
+  var TAX_DEFAULT='행사도우미';
+  function taxOf(amt){
+    /* 1원 단위까지 쓴다. 국세청이 신고 때 임의로 반올림하므로 아래에서 고칠 수 있다. */
+    return {inc:Math.floor(num(amt,0)*INC_RATE), loc:Math.floor(num(amt,0)*LOC_RATE)};
+  }
+  function whMonth(){
+    return S.whYm || (function(){ var d=new Date(); return d.getFullYear()+'-'+pad2(d.getMonth()+1); })();
+  }
+  function whKey(r){ return r.pid?('p:'+r.pid):('n:'+r.name); }
+  function whDoc(){ return S.wh[whMonth()]||{}; }
+
+  /* 그 달에 이체된 사례비를 사람별 한 줄씩 펼친다. */
+  function whRows(ym){
+    var out=[];
+    Object.keys(S.events).forEach(function(k){
+      var ev=S.events[k];
+      if(progress(ev).status!=='paid') return;
+      var on=evPaidOn(ev);
+      if(String(on).slice(0,7)!==ym) return;
+      var c=compute(ev);
+      (ev.members||[]).forEach(function(m,i){
+        /* 받은 돈 = 당일 일급(근무했으면) + 준비 사례비 */
+        var amt=(m.w?c.rate:0)+num(c.alloc[i],0);
+        if(amt<=0) return;
+        out.push({pid:m.pid||'', name:(m.pid&&personName(m.pid))||String(m.n||'').trim()||'(이름 없음)',
+                  evId:k, evName:ev.name||'(이름 없음)', on:on, amount:amt, role:m.r||''});
+      });
+    });
+    return out.sort(function(a,b){ return (a.on+a.evName+a.name).localeCompare(b.on+b.evName+b.name,'ko'); });
+  }
+  /* 지급명세서 — 한 사람 한 줄 */
+  function whPeople(rows){
+    var m={}, order=[];
+    rows.forEach(function(r){
+      var k=whKey(r);
+      if(!m[k]){ m[k]={key:k, pid:r.pid, name:r.name, n:0, amount:0, evs:{}}; order.push(k); }
+      m[k].n++; m[k].amount+=r.amount; m[k].evs[r.evName]=1;
+    });
+    var doc=whDoc(), adj=doc.adj||{}, note=doc.note||{};
+    return order.map(function(k){
+      var o=m[k], t=taxOf(o.amount), a=adj[k]||{};
+      o.taxRole=(o.pid&&(S.people[o.pid]||{}).taxRole)||'';
+      o.incCalc=t.inc; o.locCalc=t.loc;
+      o.inc=(a.inc===undefined||a.inc===null)?t.inc:num(a.inc,0);
+      o.loc=(a.loc===undefined||a.loc===null)?t.loc:num(a.loc,0);
+      o.fixed=(o.inc!==o.incCalc)||(o.loc!==o.locCalc);
+      o.note=note[k]||'';
+      o.evList=Object.keys(o.evs);
+      return o;
+    }).sort(function(a,b){ return b.amount-a.amount; });
+  }
+  function whSave(patch){
+    if(!S.db)return;
+    var ym=whMonth(), cur=clone(S.wh[ym]||{});
+    Object.keys(patch).forEach(function(k){
+      if(k==='adj'||k==='note'){
+        cur[k]=cur[k]||{};
+        Object.keys(patch[k]).forEach(function(kk){ cur[k][kk]=patch[k][kk]; });
+      } else cur[k]=patch[k];
+    });
+    cur.updatedAt=nowISO();
+    S.db.doc('withholding/'+ym).set(cur)
+      .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
+  }
+
+  function renderWithholding(){
+    var ym=whMonth(), rows=whRows(ym), ppl=whPeople(rows);
+    var total=rows.reduce(function(a,r){return a+r.amount;},0);
+    var heads=rows.length;                       /* 인원중복 포함 */
+    var sumInc=ppl.reduce(function(a,o){return a+o.inc;},0);
+    var sumLoc=ppl.reduce(function(a,o){return a+o.loc;},0);
+    var anyFixed=ppl.some(function(o){return o.fixed;});
+    var unlinked=ppl.filter(function(o){return !o.pid;}).length;
+
+    /* 행사 건별 */
+    var byEv={}, evOrder=[];
+    rows.forEach(function(r){
+      if(!byEv[r.evId]){ byEv[r.evId]={n:0,v:0,on:r.on,name:r.evName}; evOrder.push(r.evId); }
+      byEv[r.evId].n++; byEv[r.evId].v+=r.amount;
+    });
+
+    var years={}; years[new Date().getFullYear()]=1;
+    Object.keys(S.events).forEach(function(k){
+      var y=String(evPaidOn(S.events[k])||'').slice(0,4); if(y)years[y]=1;
+    });
+    var ylist=Object.keys(years).sort().reverse();
+    var yy=ym.slice(0,4), mm=ym.slice(5,7);
+    var due=(function(){
+      var y=+yy, m=+mm+1; if(m>12){m=1;y++;}
+      return y+'-'+pad2(m)+'-10';
+    })();
+
+    app.innerHTML=
+      repTabs()+
+      '<section class="card" style="margin-bottom:14px"><h2>신고 월</h2>'+
+        '<div class="row2" style="align-items:end">'+
+          '<div class="field" style="margin:0"><label for="whY">연도</label><select id="whY">'+
+            ylist.map(function(y){return '<option'+(yy===String(y)?' selected':'')+'>'+esc(y)+'</option>';}).join('')+
+          '</select></div>'+
+          '<div class="field" style="margin:0"><label for="whM">월</label><select id="whM">'+
+            [1,2,3,4,5,6,7,8,9,10,11,12].map(function(m){
+              return '<option value="'+pad2(m)+'"'+(mm===pad2(m)?' selected':'')+'>'+m+'월</option>';}).join('')+
+          '</select></div>'+
+        '</div>'+
+        '<p class="hint" style="margin:10px 0 0">'+esc(yy)+'년 '+esc(String(+mm))+'월 1일~말일에 <b>이체</b>된 사례비입니다. 신고 기한은 <b>'+esc(due)+'</b>.</p>'+
+        '<div class="actions" style="margin-top:12px"><button class="btn sm" id="whCsv">CSV 내려받기</button></div>'+
+      '</section>'+
+
+      '<div class="tiles" style="margin-bottom:14px">'+
+        tile('총 인원', heads+'명', '인원중복 포함')+
+        tile('총 지급액', won(total), rows.length?evOrder.length+'개 행사':'지급 없음')+
+        tile('국세 3%', won(sumInc), anyFixed?'일부 직접 고침':'계산값')+
+        tile('지방세 0.3%', won(sumLoc), anyFixed?'일부 직접 고침':'계산값')+
+      '</div>'+
+
+      (unlinked?'<div class="note n-warn" style="margin:0 0 14px"><b>명부에 연결되지 않은 사람이 '+unlinked+'명</b> 있습니다. '+
+        '이름 글자로만 묶여 있어 같은 사람이 갈라져 있을 수 있습니다. 정산 → 인력에서 이어 붙여주세요.</div>':'')+
+
+      '<section class="card"><h2>지급명세서 — 사람별 합산</h2>'+
+        (ppl.length
+          ? '<div class="scroll"><table><thead><tr><th>이름</th><th>신고 분류</th><th class="num">건수</th>'+
+            '<th class="num">지급액</th><th class="num">국세</th><th class="num">지방세</th><th>비고</th></tr></thead><tbody>'+
+            ppl.map(function(o){
+              var ed=S.whEdit===o.key;
+              return '<tr>'+
+                '<td><b>'+esc(o.name)+'</b>'+(o.pid?'':' <span class="pill p-rejected">명부 밖</span>')+
+                  '<div style="font-size:11.5px;color:var(--muted)">'+esc(o.evList.join(', '))+'</div></td>'+
+                '<td style="width:150px">'+
+                  (o.pid
+                    ? '<input data-whrole="'+esc(o.pid)+'" list="taxhint2" value="'+esc(o.taxRole)+'" '+
+                      'placeholder="'+esc(TAX_DEFAULT)+'" style="padding:5px 8px;font-size:12.5px">'
+                    : '<span style="color:var(--zero)">—</span>')+'</td>'+
+                '<td class="num">'+o.n+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(o.amount)+'</td>'+
+                (ed
+                  ? '<td class="num"><input data-whinc="'+esc(o.key)+'" type="number" value="'+o.inc+'" style="width:92px;padding:4px 6px;text-align:right"></td>'+
+                    '<td class="num"><input data-whloc="'+esc(o.key)+'" type="number" value="'+o.loc+'" style="width:88px;padding:4px 6px;text-align:right"></td>'
+                  : '<td class="num" style="font-family:var(--font-num)'+(o.inc!==o.incCalc?';color:var(--warn);font-weight:700':'')+'" title="계산값 '+won(o.incCalc)+'">'+won(o.inc)+'</td>'+
+                    '<td class="num" style="font-family:var(--font-num)'+(o.loc!==o.locCalc?';color:var(--warn);font-weight:700':'')+'" title="계산값 '+won(o.locCalc)+'">'+won(o.loc)+'</td>')+
+                '<td style="min-width:170px"><div style="display:flex;gap:5px">'+
+                  '<input data-whnote="'+esc(o.key)+'" value="'+esc(o.note)+'" placeholder="특이사항" style="padding:5px 8px;font-size:12.5px">'+
+                  (ed?'<button class="btn sm" data-whdone="'+esc(o.key)+'">완료</button>'
+                     :'<button class="btn sm" data-whfix="'+esc(o.key)+'" title="세액 직접 고치기">세액</button>')+
+                '</div></td></tr>';
+            }).join('')+
+            '<tr><th>합계</th><th></th><th class="num">'+heads+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(total)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(sumInc)+'</th>'+
+              '<th class="num" style="font-family:var(--font-num)">'+won(sumLoc)+'</th><th></th></tr>'+
+            '</tbody></table></div>'+
+            '<datalist id="taxhint2">'+TAX_HINT.map(function(t){return '<option value="'+esc(t)+'">';}).join('')+'</datalist>'+
+            '<p class="hint" style="margin-top:10px">세액은 1원 단위로 계산합니다. 국세청에서 반올림되면 <b>세액</b>을 눌러 직접 고치세요. 고친 줄은 주황색으로 표시됩니다.</p>'
+          : '<div class="empty"><strong>이 달에 이체된 사례비가 없습니다</strong>정산에서 지급 완료할 때 넣은 <b>이체일</b>로 끊습니다.</div>')+
+      '</section>'+
+
+      '<section class="card" style="margin-top:14px"><h2>행사 건별</h2>'+
+        (evOrder.length
+          ? '<div class="scroll"><table><thead><tr><th>행사</th><th class="num">이체일</th><th class="num">인원</th><th class="num">지급액</th></tr></thead><tbody>'+
+            evOrder.map(function(k){
+              var g=byEv[k];
+              return '<tr class="rowlink" data-go="ev:'+esc(k)+'"><td><b>'+esc(g.name)+'</b></td>'+
+                '<td class="num" style="color:var(--muted)">'+esc(g.on)+'</td>'+
+                '<td class="num">'+g.n+'</td>'+
+                '<td class="num" style="font-family:var(--font-num)">'+won(g.v)+'</td></tr>';
+            }).join('')+'</tbody></table></div>'
+          : '<div class="empty" style="padding:22px 8px">해당 없음</div>')+
+      '</section>';
+  }
+  function whCsv(){
+    var ym=whMonth(), rows=whRows(ym), ppl=whPeople(rows), L=[];
+    function row(a){ return a.map(function(v){
+      v=String(v==null?'':v);
+      return /[",\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v;
+    }).join(','); }
+    var total=rows.reduce(function(a,r){return a+r.amount;},0);
+    var sumInc=ppl.reduce(function(a,o){return a+o.inc;},0);
+    var sumLoc=ppl.reduce(function(a,o){return a+o.loc;},0);
+    L.push(row(['마이티블레싱 원천세 · 지급명세서', ym]));
+    L.push('');
+    L.push(row(['원천세 요약']));
+    L.push(row(['총 인원(인원중복 포함)', rows.length]));
+    L.push(row(['총 지급액', total]));
+    L.push(row(['국세 3%', sumInc]));
+    L.push(row(['지방세 0.3%', sumLoc]));
+    L.push('');
+    L.push(row(['지급명세서 (사람별 합산)']));
+    L.push(row(['이름','신고 분류','건수','지급액','국세','지방세','비고','참여 행사']));
+    ppl.forEach(function(o){
+      L.push(row([o.name, o.taxRole||TAX_DEFAULT, o.n, o.amount, o.inc, o.loc, o.note, o.evList.join(' / ')]));
+    });
+    L.push(row(['합계','',rows.length,total,sumInc,sumLoc,'','']));
+    L.push('');
+    L.push(row(['지급 내역 (행사 건별)']));
+    L.push(row(['이체일','행사','이름','지급액']));
+    rows.forEach(function(r){ L.push(row([r.on, r.evName, r.name, r.amount])); });
+    var blob=new Blob(['\ufeff'+L.join('\r\n')],{type:'text/csv;charset=utf-8'});
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='마블 원천세 '+ym+'.csv';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); },1000);
+    flash('CSV를 내려받았습니다');
+  }
+  function repTabs(){
+    return '<div class="tabs" style="margin:0 0 14px">'+
+      [['pl','손익'],['wh','원천세 · 지급명세서']].map(function(x){
+        return '<button type="button" data-rtab="'+x[0]+'" aria-pressed="'+(S.repTab===x[0]?'true':'false')+'">'+x[1]+'</button>';
+      }).join('')+'</div>';
+  }
+
   function renderReport(){
+    if(S.repTab==='wh') return renderWithholding();
     var D=repData(), r=D.r;
     var years={}; years[new Date().getFullYear()]=1;
     Object.keys(S.events).forEach(function(k){var y=(S.events[k].date||'').slice(0,4); if(y)years[y]=1;});
@@ -2475,6 +2700,7 @@
 
     app.innerHTML=
       '<div class="stack">'+
+      repTabs()+
       '<section class="card"><h2>기간</h2>'+
         '<div class="row2" style="align-items:end">'+
           '<div class="field" style="margin:0"><label for="repY">연도</label><select id="repY">'+
@@ -2798,6 +3024,10 @@
         .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
       return;
     }
+    if((el=t.closest('[data-rtab]'))){ S.repTab=el.dataset.rtab; S.whEdit=null; remember(); render(); return; }
+    if(t.id==='whCsv') return whCsv();
+    if((el=t.closest('[data-whfix]'))){ S.whEdit=el.dataset.whfix; render(); return; }
+    if((el=t.closest('[data-whdone]'))){ S.whEdit=null; render(); return; }
     if((el=t.closest('[data-rseg]'))){ S.rep.seg=el.dataset.rseg; render(); return; }
     if(t.id==='repCsv') return repCsv();
     if(t.id==='memRefresh'){ S.allowed=null; refreshMembers(); loadAllowed(); flash('명단을 다시 읽었습니다'); return; }
@@ -2913,6 +3143,27 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.dataset&&t.dataset.whrole!==undefined){
+      var pid=t.dataset.whrole, pv=clone(S.people[pid]||{});
+      pv.taxRole=t.value; pv.updatedAt=nowISO();
+      clearTimeout(t._tw); t._tw=setTimeout(function(){ savePerson(pid,pv).catch(function(){}); },600);
+      return;
+    }
+    if(t.dataset&&t.dataset.whnote!==undefined){
+      var nk=t.dataset.whnote, nv=t.value;
+      clearTimeout(t._tw); t._tw=setTimeout(function(){ var o={}; o[nk]=nv; whSave({note:o}); },600);
+      return;
+    }
+    if(t.dataset&&(t.dataset.whinc!==undefined||t.dataset.whloc!==undefined)){
+      var ak=t.dataset.whinc||t.dataset.whloc;
+      var which=t.dataset.whinc!==undefined?'inc':'loc';
+      clearTimeout(t._tw); t._tw=setTimeout(function(){
+        var cur=clone((whDoc().adj||{})[ak]||{});
+        cur[which]=num(t.value,0);
+        var o={}; o[ak]=cur; whSave({adj:o});
+      },600);
+      return;
+    }
     if(t.id==='evPayOn'){ S.payOn=t.value; return; }
     if(t.id==='payOn'){ S.payOn=t.value; return; }
     var ev=S.sel&&S.events[S.sel]; if(!ev)return;
@@ -3000,6 +3251,8 @@
     if(xd&&xd.type!=='expense'&&t.id==='dScope'){
       xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); render(); return;
     }
+    if(t.id==='whY'){ S.whYm=t.value+'-'+whMonth().slice(5,7); render(); return; }
+    if(t.id==='whM'){ S.whYm=whMonth().slice(0,4)+'-'+t.value; render(); return; }
     if(t.id==='repY'){ S.rep.y=+t.value; render(); return; }
     if(t.id==='repM'){ S.rep.seg=t.value||'all'; render(); return; }
     if(t.id==='repNet'){ S.repNet=t.checked; render(); return; }
@@ -3683,6 +3936,11 @@
         S.avatars=av; S.profileRows=rows; S.profilesLoaded=true;
         syncMyProfile();
         render();
+      },function(){});
+
+      S.db.collection('withholding').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.wh=next; render();
       },function(){});
 
       S.db.collection('people').onSnapshot(function(snap){
