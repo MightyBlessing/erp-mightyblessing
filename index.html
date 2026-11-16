@@ -491,7 +491,8 @@
     people:{},setTab:'events',personEdit:null,personDel:null,peopleQ:'',linking:false,
     banks:{},ledger:{},acctMain:'spend',bankEdit:null,bankDel:null,
     ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
-    rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null};
+    rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
+    adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open'};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -2268,6 +2269,276 @@
       '</div>';
   }
 
+  /* ─── 대신결제 ───
+     개인 돈으로 먼저 내고 나중에 회사가 돌려주는 돈이다.
+     중요한 점: 개인이 낸 시점에는 회사 통장에서 한 푼도 안 나간다.
+     그래서 장부에는 「돌려준 날」에, 「돌려준 통장」에서 나간 것으로 꽂는다.
+     개인이 낸 날짜(on)는 무엇에 썼는지 알기 위해 따로 들고만 있는다. */
+  function advList(){
+    return Object.keys(S.adv).map(function(k){
+      var o=clone(S.adv[k]); o.id=k; return o;
+    }).sort(function(a,b){
+      /* 아직 못 받은 게 위로, 그 다음은 낸 날짜 오래된 순 */
+      var sa=(a.state==='done')?1:0, sb=(b.state==='done')?1:0;
+      if(sa!==sb) return sa-sb;
+      if(sa===1) return String(b.doneOn||'').localeCompare(String(a.doneOn||''));
+      return String(a.on||'').localeCompare(String(b.on||''));
+    });
+  }
+  function advOpen(){ return advList().filter(function(a){ return a.state!=='done'; }); }
+  function advMine(){
+    if(!S.me.id) return [];
+    return advOpen().filter(function(a){ return a.uid===S.me.id; });
+  }
+  function advSum(L){ return L.reduce(function(x,a){ return x+num(a.amt,0); },0); }
+  /* 올린 사람 본인, 아니면 회계·관리자 */
+  function advOwn(a){ return !!(a&&(a.uid===S.me.id||ledEditable())); }
+  function advName(a){
+    if(!a) return '';
+    return a.uid?(nameOf(a.uid)||a.name||''):(a.name||'');
+  }
+
+  function saveAdvForm(){
+    var v=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var on=v('adOn');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('낸 날짜를 넣어주세요');
+    var amt=num(v('adAmt'),0);
+    if(amt<=0) return errbar('금액을 넣어주세요');
+    var item=v('adItem').trim();
+    if(!item) return errbar('무엇에 썼는지 적어주세요');
+
+    var ed=S.advEdit, isNew=(ed==='new');
+    var old=isNew?{}:(S.adv[ed]||{});
+    var biz=v('adBiz');
+    var body={
+      on:on, amt:amt, item:item.slice(0,60),
+      biz:biz, ev:(biz==='다. 예배운영')?(v('adEv')||(S.advDraft&&S.advDraft.ev)||''):'',
+      way:v('adWay')||'개인카드', memo:v('adMemo').trim(),
+      uid:old.uid||S.me.id||'', name:old.name||S.me.name||'',
+      state:old.state||'open',
+      createdAt:old.createdAt||nowISO(), updatedAt:nowISO()
+    };
+    /* 이미 돌려준 건은 정산 기록을 지우지 않는다 */
+    if(old.state==='done'){ body.doneOn=old.doneOn; body.bank=old.bank; body.doneBy=old.doneBy; }
+
+    if(!S.db) return;
+    var ref=isNew?S.db.collection('adv').doc():S.db.doc('adv/'+ed);
+    ref.set(body).then(function(){
+      S.advEdit=null; S.advDraft=null;
+      /* 이미 장부에 꽂힌 건을 고쳤으면 장부 줄도 따라가야 한다 */
+      if(body.state==='done') return advPost(isNew?ref.id:ed, body);
+    }).then(function(){ flash('저장했습니다'); render(); })
+     .catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+  }
+
+  function advPost(id,a){
+    return postLed('adv:'+id,{
+      on:a.doneOn, dir:'out', amt:num(a.amt,0), bank:a.bank,
+      ev:a.ev||'', biz:a.biz||'가. 운영비',
+      item:(a.item||'').slice(0,40),
+      party:advName(a).slice(0,40),
+      memo:(a.item||'대신결제')+' · '+advName(a)+' 대신결제',
+      way:'계좌이체', payer:advName(a),
+      note:'개인이 '+(a.on||'')+'에 '+(a.way||'개인카드')+'로 먼저 냈습니다'
+    });
+  }
+
+  /* 돌려줬다 — 이때 비로소 회사 통장에서 돈이 나간다 */
+  function advDone(id){
+    var a=S.adv[id]; if(!a||!S.db) return;
+    if(!ledEditable()) return errbar('회계 역할을 가진 사람만 정산할 수 있습니다');
+    /* 화면에 지금 떠 있는 값을 그대로 읽는다. 바꾼 걸 상태에 담아두는 것만
+       믿으면, 입력 신호 하나를 놓쳤을 때 조용히 빈 값으로 저장된다. */
+    var g=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var on=String(g('adPayOn')||S.advOn||'').slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('돌려준 날짜를 넣어주세요');
+    var bk=g('adPayBank')||S.advBank;
+    if(!bk) return errbar('어느 통장에서 보냈는지 골라주세요');
+    var body=clone(a);
+    body.state='done'; body.doneOn=on; body.bank=bk;
+    body.doneBy=S.me.id||''; body.updatedAt=nowISO();
+    S.db.doc('adv/'+id).set(body).then(function(){
+      return advPost(id,body);
+    }).then(function(){
+      S.advPay=null; S.advBank=''; S.advOn='';
+      flash(won(num(a.amt,0))+' 정산 · 장부에 넣었습니다'); render();
+    }).catch(function(e){ errbar('정산 실패 '+(e&&e.code||'')); });
+  }
+
+  /* 되돌리기 — 장부 줄까지 같이 걷어낸다 */
+  function advUndo(id){
+    var a=S.adv[id]; if(!a||!S.db) return;
+    if(!ledEditable()) return errbar('회계 역할을 가진 사람만 되돌릴 수 있습니다');
+    var body=clone(a);
+    body.state='open'; delete body.doneOn; delete body.bank; delete body.doneBy;
+    body.updatedAt=nowISO();
+    S.db.doc('adv/'+id).set(body).then(function(){
+      var lid=ledBySrc('adv:'+id);
+      if(lid) return S.db.doc('ledger/'+lid).delete();
+    }).then(function(){ S.advBack=null; flash('되돌렸습니다'); render(); })
+     .catch(function(e){ errbar('되돌리기 실패 '+(e&&e.code||'')); });
+  }
+
+  function delAdv(id){
+    var a=S.adv[id]; if(!a||!S.db) return;
+    if(!advOwn(a)) return errbar('올린 사람만 지울 수 있습니다');
+    if(a.state==='done'&&!ledEditable())
+      return errbar('이미 정산된 건은 회계만 지울 수 있습니다');
+    S.db.doc('adv/'+id).delete().then(function(){
+      var lid=ledBySrc('adv:'+id);
+      if(lid) return S.db.doc('ledger/'+lid).delete();
+    }).then(function(){ S.advDel=null; flash('지웠습니다'); render(); })
+     .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+  }
+
+  function renderAdv(){
+    var L=advList(), banks=bankList(), mine=advMine();
+    var showDone=S.advWho==='all';
+    var V=showDone?L:L.filter(function(a){ return a.state!=='done'; });
+    var openL=advOpen();
+
+    var ed=S.advEdit;
+    var cur=S.advDraft||((ed&&ed!=='new')?(S.adv[ed]||{}):{});
+    var form='';
+    if(ed){
+      var bizNow=cur.biz||'가. 운영비';
+      form='<section class="card" style="margin-bottom:14px"><h2>'+
+        (ed==='new'?'대신 낸 돈 적기':'고치기')+'</h2>'+
+        '<div class="row3">'+
+          '<div class="field"><label for="adOn">낸 날</label>'+
+            '<input id="adOn" type="date" value="'+esc(cur.on||today())+'"></div>'+
+          '<div class="field"><label for="adAmt">금액</label>'+
+            '<input id="adAmt" type="number" inputmode="numeric" value="'+esc(String(cur.amt||''))+'"></div>'+
+          '<div class="field"><label for="adWay">어떻게</label><select id="adWay">'+
+            ADVWAY.map(function(w){
+              return '<option value="'+esc(w)+'"'+((cur.way||'개인카드')===w?' selected':'')+'>'+esc(w)+'</option>';
+            }).join('')+'</select></div>'+
+        '</div>'+
+        '<div class="field"><label for="adItem">무엇에 썼는지</label>'+
+          '<input id="adItem" value="'+esc(cur.item||'')+'" placeholder="예: 스태프 야식 · 주차비 · 케이블 구입"></div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="adBiz">사업</label><select id="adBiz">'+
+            BIZ.map(function(b){
+              return '<option value="'+esc(b)+'"'+(bizNow===b?' selected':'')+'>'+esc(b)+'</option>';
+            }).join('')+'</select></div>'+
+          (bizNow==='다. 예배운영'
+            ? '<div class="field"><label for="adEv">행사</label><select id="adEv">'+
+                '<option value="">— 고르지 않음 —</option>'+
+                evChoices().map(function(e){
+                  return '<option value="'+esc(e.id)+'"'+(cur.ev===e.id?' selected':'')+'>'+
+                    esc(e.name||'(이름 없음)')+(e.date?' · '+esc(e.date):'')+'</option>';
+                }).join('')+'</select></div>'
+            : '<div class="field"><label>&nbsp;</label><div class="hint" style="padding-top:9px">'+
+              '행사 지출이면 사업을 「다. 예배운영」으로 바꿔주세요.</div></div>')+
+        '</div>'+
+        '<div class="field"><label for="adMemo">메모</label>'+
+          '<input id="adMemo" value="'+esc(cur.memo||'')+'" placeholder="영수증 있는 곳, 같이 간 사람 등"></div>'+
+        '<div class="actions"><button class="btn primary" id="adSave">저장</button>'+
+          '<button class="btn" id="adCancel">취소</button></div>'+
+        '<p class="hint" style="margin-top:10px">여기 적는다고 돈이 바로 나가지 않습니다. '+
+          '회계가 「돌려줌」을 누르는 날에 그 통장에서 나간 것으로 장부에 들어갑니다.</p>'+
+      '</section>';
+    }
+
+    var rows=V.map(function(a){
+      var done=a.state==='done';
+      var ev=a.ev&&S.events[a.ev];
+      var payOpen=S.advPay===a.id;
+      var ctl='';
+      if(S.advDel===a.id){
+        ctl='<button class="btn danger sm" data-adyes="'+esc(a.id)+'">지움</button>'+
+            '<button class="btn sm" id="adNo" style="margin-left:4px">취소</button>';
+      } else if(S.advBack===a.id){
+        ctl='<button class="btn danger sm" data-adundoyes="'+esc(a.id)+'">되돌림</button>'+
+            '<button class="btn sm" id="adBackNo" style="margin-left:4px">취소</button>';
+      } else if(done){
+        ctl=ledEditable()
+          ? '<button class="btn sm" data-adundo="'+esc(a.id)+'">되돌리기</button>'
+          : '';
+      } else {
+        ctl=(ledEditable()&&banks.length?'<button class="btn primary sm" data-adpay="'+esc(a.id)+'">돌려줌</button>':'')+
+            (advOwn(a)?'<button class="btn sm" data-adedit="'+esc(a.id)+'" style="margin-left:4px">고침</button>'+
+                       '<button class="del" data-addel="'+esc(a.id)+'" aria-label="삭제" style="margin-left:4px">×</button>':'');
+      }
+
+      var main='<tr'+(payOpen?' style="background:var(--accent-soft)"':'')+'>'+
+        '<td style="white-space:nowrap">'+esc(a.on||'')+
+          (done?'<div style="font-size:11.5px;color:var(--muted)">'+esc(a.doneOn||'')+' 정산</div>':'')+'</td>'+
+        '<td><b>'+esc(a.item||'(내용 없음)')+'</b>'+
+          '<div style="font-size:12px;color:var(--muted)">'+esc(advName(a)||'—')+' · '+esc(a.way||'')+
+            (ev?' · '+esc(ev.name||''):'')+'</div>'+
+          (a.memo?'<div style="font-size:12px;color:var(--muted)">'+esc(a.memo)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);white-space:nowrap">'+won(num(a.amt,0))+'</td>'+
+        '<td style="white-space:nowrap">'+
+          (done?'<span class="pill p-paid">정산됨</span>':'<span class="pill p-pending">못 받음</span>')+
+          (done&&a.bank?'<div style="font-size:11.5px;color:var(--muted)">'+esc(bankName(a.bank)||'')+'</div>':'')+'</td>'+
+        '<td style="width:170px">'+ctl+'</td>'+
+      '</tr>';
+
+      if(!payOpen) return main;
+      return main+'<tr><td colspan="5" style="background:var(--accent-soft)">'+
+        '<div class="row3" style="margin:4px 0">'+
+          '<div class="field"><label for="adPayOn">돌려준 날</label>'+
+            '<input id="adPayOn" type="date" value="'+esc(S.advOn||today())+'"></div>'+
+          '<div class="field"><label for="adPayBank">어느 통장에서</label><select id="adPayBank">'+
+            '<option value="">— 고르세요 —</option>'+
+            banks.map(function(b){
+              return '<option value="'+esc(b.id)+'"'+(S.advBank===b.id?' selected':'')+'>'+
+                esc(b.name)+' · '+won(bankBal(b.id))+'</option>';
+            }).join('')+'</select></div>'+
+          '<div class="field"><label>&nbsp;</label>'+
+            '<div class="actions" style="margin:0">'+
+              '<button class="btn primary sm" data-adpayyes="'+esc(a.id)+'">'+won(num(a.amt,0))+' 보냈습니다</button>'+
+              '<button class="btn sm" id="adPayNo">취소</button></div></div>'+
+        '</div>'+
+        '<p class="hint" style="margin:0">이 날짜·이 통장으로 장부에 출금 한 줄이 들어갑니다.</p>'+
+      '</td></tr>';
+    }).join('');
+
+    app.innerHTML=
+      '<div class="stack">'+
+      acctTabs()+
+      (mine.length
+        ? '<div class="note n-warn"><b>내가 아직 못 받은 돈 '+won(advSum(mine))+'</b> ('+mine.length+'건) — '+
+          '회계가 「돌려줌」을 누르면 정산됩니다.</div>'
+        : '')+
+      '<div class="tiles">'+
+        tile('못 받은 돈', won(advSum(openL)), openL.length+'건', openL.length>0)+
+        tile('사람 수', (function(){
+          var m={}; openL.forEach(function(a){ m[a.uid||a.name||'?']=1; });
+          return Object.keys(m).length+'명';
+        })(), '돌려줘야 할 사람')+
+        tile('가장 오래된 건', (function(){
+          if(!openL.length) return '—';
+          var o=openL[0].on||'';
+          if(!o) return '—';
+          var d=Math.round((Date.now()-new Date(o+'T00:00:00').getTime())/86400000);
+          return (d>=0?d:0)+'일 전';
+        })(), openL.length?(openL[0].item||''):'없습니다', openL.length&&
+          (Date.now()-new Date((openL[0].on||today())+'T00:00:00').getTime())>30*86400000)+
+      '</div>'+
+      form+
+      '<section class="card"><h2>대신결제'+
+        (!ed?' <button class="btn primary sm" id="adNew" style="float:right">내가 대신 냈습니다</button>':'')+'</h2>'+
+        '<div class="tabs" style="margin:0 0 12px">'+
+          ['open','all'].map(function(x){
+            return '<button type="button" data-adwho="'+x+'" aria-pressed="'+(S.advWho===x?'true':'false')+'">'+
+              (x==='open'?'못 받은 것':'전부')+
+              (x==='open'?'<span class="n">'+openL.length+'</span>':'')+'</button>';
+          }).join('')+'</div>'+
+        (V.length
+          ? '<div class="scroll"><table><thead><tr>'+
+              '<th>낸 날</th><th>내역</th><th class="num">금액</th><th>상태</th><th></th>'+
+            '</tr></thead><tbody>'+rows+'</tbody></table></div>'
+          : '<div class="empty" style="padding:26px 8px">'+
+            (showDone?'아직 적힌 게 없습니다.':'못 받은 돈이 없습니다.')+'<br>'+
+            '개인 돈으로 먼저 내신 게 있으면 「내가 대신 냈습니다」를 눌러 적어주세요.</div>')+
+        (banks.length?'':'<div class="note n-warn" style="margin-top:12px">'+
+          '통장이 없어 정산 처리를 할 수 없습니다. 「통장」에서 먼저 만들어주세요.</div>')+
+      '</section>'+
+      '</div>';
+  }
+
   function saveLedForm(){
     var v=function(id){ var e=$('#'+id); return e?e.value:''; };
     var dir=v('ldDir')||'out';
@@ -2819,9 +3090,10 @@
 
   function acctTabs(){
     return '<div class="tabs" style="margin:0 0 14px">'+
-      [['spend','지출 현황'],['book','장부'],['evpl','행사별'],['banks','통장']].map(function(x){
+      [['spend','지출 현황'],['book','장부'],['evpl','행사별'],['adv','대신결제'],['banks','통장']].map(function(x){
         return '<button type="button" data-amain="'+x[0]+'" aria-pressed="'+(S.acctMain===x[0]?'true':'false')+'">'+x[1]+
           (x[0]==='book'?'<span class="n">'+Object.keys(S.ledger).length+'</span>':'')+
+          (x[0]==='adv'&&advOpen().length?'<span class="n">'+advOpen().length+'</span>':'')+
           (x[0]==='banks'?'<span class="n">'+Object.keys(S.banks).length+'</span>':'')+'</button>';
       }).join('')+'</div>';
   }
@@ -2829,6 +3101,7 @@
   function renderAcct(){
     if(S.acctMain==='book')  return renderBook();
     if(S.acctMain==='evpl')  return renderEvPl();
+    if(S.acctMain==='adv')   return renderAdv();
     if(S.acctMain==='banks') return renderBanks();
     var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
     var pending=approved.filter(function(d){return payState(d)==='pending';});
@@ -3160,6 +3433,8 @@
      여기를 바꾸면 지난 장부와 대조가 안 되므로 함부로 고치지 않는다. */
   var BIZ=['가. 운영비','나. 컨테이너','다. 예배운영','라. 사업비'];
   /* 결제수단. 시트 「분류」 탭에 적힌 경우의 수. */
+  /* 대신결제는 회사 돈이 아니라 개인 돈이 먼저 나간 것이다. */
+  var ADVWAY=['개인카드','현금','개인계좌'];
   var PAYWAY=['계좌이체','세훈카드','준철카드','준철카드(신용)','현금영수증','세금계산서','현금'];
 
   var INC_RATE=0.03, LOC_RATE=0.003;
@@ -3706,8 +3981,27 @@
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
     if((el=t.closest('[data-amain]'))){
       S.acctMain=el.dataset.amain; S.ledEdit=null; S.bankEdit=null; S.ledDraft=null;
-      S.ledDel=null; S.bankDel=null; remember(); render(); return;
+      S.ledDel=null; S.bankDel=null;
+      S.advEdit=null; S.advDraft=null; S.advPay=null; S.advDel=null; S.advBack=null;
+      remember(); render(); return;
     }
+    /* ── 대신결제 ── */
+    if((el=t.closest('[data-adwho]'))){ S.advWho=el.dataset.adwho; render(); return; }
+    if(t.id==='adNew'){ S.advEdit='new'; S.advDraft=null; render(); return; }
+    if(t.id==='adCancel'){ S.advEdit=null; S.advDraft=null; render(); return; }
+    if(t.id==='adSave'){ return saveAdvForm(); }
+    if((el=t.closest('[data-adedit]'))){ S.advEdit=el.dataset.adedit; S.advDraft=null; S.advPay=null; render(); return; }
+    if((el=t.closest('[data-addel]'))){ S.advDel=el.dataset.addel; render(); return; }
+    if(t.id==='adNo'){ S.advDel=null; render(); return; }
+    if((el=t.closest('[data-adyes]'))){ return delAdv(el.dataset.adyes); }
+    if((el=t.closest('[data-adpay]'))){
+      S.advPay=el.dataset.adpay; S.advOn=today(); S.advBank=''; S.advDel=null; render(); return;
+    }
+    if(t.id==='adPayNo'){ S.advPay=null; render(); return; }
+    if((el=t.closest('[data-adpayyes]'))){ return advDone(el.dataset.adpayyes); }
+    if((el=t.closest('[data-adundo]'))){ S.advBack=el.dataset.adundo; render(); return; }
+    if(t.id==='adBackNo'){ S.advBack=null; render(); return; }
+    if((el=t.closest('[data-adundoyes]'))){ return advUndo(el.dataset.adundoyes); }
     /* ── 통장 ── */
     if(t.id==='bkNew'){ S.bankEdit='new'; render(); return; }
     if(t.id==='bkCancel'){ S.bankEdit=null; render(); return; }
@@ -3910,6 +4204,22 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='adPayOn'){ S.advOn=t.value; return; }
+    if(t.id==='adPayBank'){ S.advBank=t.value; return; }
+    if(t.id==='adBiz'){
+      /* 사업을 바꾸면 행사 고르개가 나타나거나 사라진다.
+         다시 그리면 화면의 입력이 날아가니 적던 걸 초안에 떠서 들고 넘어간다. */
+      var g=function(id){ var e=$('#'+id); return e?e.value:''; };
+      var d=S.advDraft||((S.advEdit&&S.advEdit!=='new')?clone(S.adv[S.advEdit]||{}):{});
+      d.on=g('adOn'); d.amt=num(g('adAmt'),0); d.way=g('adWay');
+      d.item=g('adItem'); d.memo=g('adMemo');
+      var was=d.biz; d.biz=t.value;
+      d.ev=(t.value==='다. 예배운영')?(g('adEv')||d.ev||''):'';
+      S.advDraft=d;
+      if((was==='다. 예배운영')!==(t.value==='다. 예배운영')) render();
+      return;
+    }
+    if(t.id==='adEv'){ if(S.advDraft) S.advDraft.ev=t.value; return; }
     if(t.id==='rcvOn'){ S.rcvOn=t.value; return; }
     if(t.id==='rcvAmt'){ S.rcvAmt=t.value; return; }
     if(t.id==='rcvBank'){ S.rcvBank=t.value; return; }
@@ -4775,6 +5085,10 @@
         S.banks=next; render();
       },function(){});
 
+      S.db.collection('adv').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.adv=next; render();
+      },function(){});
       S.db.collection('ledger').onSnapshot(function(snap){
         var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
         S.ledger=next; render();
