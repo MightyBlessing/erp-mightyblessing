@@ -575,9 +575,29 @@
   var esc=function(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');};
   var clone=function(o){ try{ return JSON.parse(JSON.stringify(o||{})); }catch(e){ return {}; } };
   var num=function(v,d){var n=parseFloat(v);return isNaN(n)?(d||0):n;};
-  var today=function(){return new Date().toISOString().slice(0,10);};
-  var nowISO=function(){return new Date().toISOString();};
-  var shortTime=function(s){return String(s||'').slice(5,16).replace('T',' ');};
+  /* ─── 날짜와 시각 ───
+     담아둘 때는 UTC(nowISO)로 둔다. 어디서 열어도 순서가 뒤집히지 않는다.
+     보여줄 때와 「오늘」을 정할 때는 반드시 이 컴퓨터 시간으로 바꾼다.
+
+     toISOString() 을 그대로 잘라 쓰면 한국에서 새벽 0~9시에 「오늘」이
+     어제가 된다. 그 시간에 지급 처리를 하면 이체일이 하루 전으로 들어가고,
+     월초 새벽이면 원천세 신고 달까지 어긋난다. */
+  var p2=function(n){ return (n<10?'0':'')+n; };
+  var ymdOf=function(d){ return d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate()); };
+  var today=function(){ return ymdOf(new Date()); };
+  var nowISO=function(){ return new Date().toISOString(); };
+  /* 담아둔 값에서 날짜만. 시각이 붙어 있으면 이 컴퓨터 시간으로 바꿔서 끊는다. */
+  var ymd=function(v){
+    var x=String(v||''); if(!x) return '';
+    if(x.indexOf('T')<0) return x.slice(0,10);
+    var d=new Date(x); return isNaN(d.getTime())?x.slice(0,10):ymdOf(d);
+  };
+  var shortTime=function(v){
+    var x=String(v||''); if(!x) return '';
+    var d=new Date(x);
+    if(isNaN(d.getTime())) return x.slice(5,16).replace('T',' ');
+    return p2(d.getMonth()+1)+'-'+p2(d.getDate())+' '+p2(d.getHours())+':'+p2(d.getMinutes());
+  };
 
   function errbar(msg){
     try{
@@ -1117,13 +1137,13 @@
      예전 건에는 on 이 없으니 그때는 at 을 쓴다. */
   function paidOn(d){
     var p=d.pay||{};
-    return String(p.on||p.at||'').slice(0,10);
+    return p.on?String(p.on).slice(0,10):ymd(p.at);
   }
   function evPaidOn(ev){
     if(ev&&ev.paidOn) return String(ev.paidOn).slice(0,10);
     var log=apprOf(ev.id).filter(function(a){return a.kind==='paid';});
     var last=log[log.length-1];
-    return last?String(last.at||'').slice(0,10):(ev.date||'');
+    return last?ymd(last.at):(ev.date||'');
   }
   /* 지출결의서는 공문과 같은 결재 엔진을 쓴다. 승인 이후 단계만 따로 붙는다. */
   function newExpenseBody(){
@@ -4172,7 +4192,7 @@
         '><td>'+cell+'</td>'+
         '<td style="width:120px">'+sel+'</td>'+
         '<td style="width:120px">'+adm+'</td>'+
-        '<td class="num" style="width:92px;color:var(--muted)">'+esc(String(m.joinedAt||'').slice(0,10))+'</td></tr>';
+        '<td class="num" style="width:92px;color:var(--muted)">'+esc(ymd(m.joinedAt))+'</td></tr>';
     }).join('');
 
     var allowBlock='';
@@ -4226,7 +4246,7 @@
   }
   function pad2(n){ n=String(n); return n.length<2?('0'+n):n; }
   function lastDay(y,m){ return new Date(y,m,0).getDate(); }
-  function inRange(iso,r){ var k=String(iso||'').slice(0,10); return !!k && k>=r.from && k<=r.to; }
+  function inRange(iso,r){ var k=ymd(iso); return !!k && k>=r.from && k<=r.to; }
 
   function repData(){
     var r=repRange();
