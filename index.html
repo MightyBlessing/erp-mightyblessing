@@ -576,7 +576,8 @@
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
-    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:''};
+    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
+    budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -1437,6 +1438,14 @@
              up.docs.length+'건 결재분'+(up.adv.length?(' · 대신결제 '+up.adv.length+'건'):''), up.total>0)+
         tile('받아야 할 돈', won(due.sum), due.rows.length+'개 행사', due.sum>0)+
         tile('내 결재 대기', todo.length+'건', todo.length?'지금 처리해야 합니다':'처리할 문서 없음', todo.length>0)+
+        (function(){
+          /* 예산을 안 잡았으면 0%가 아니라 「—」다. 다 썼다는 뜻으로 읽히면 안 된다. */
+          var B=bgTotals();
+          if(!B.n) return tile('예산 집행률','—','예산을 아직 안 잡았습니다');
+          var over=bgList().filter(function(b){return bgRate(b)>1;}).length;
+          return tile('예산 집행률', Math.round(B.rate*100)+'%',
+            over?(over+'건이 예산을 넘겼습니다'):('남은 예산 '+won(B.left)), B.rate>1||over>0);
+        })()+
         tile('진행 중', (running.length+prog.length)+'건', '행사 '+running.length+' · 문서 '+prog.length)+
       '</div>'+
 
@@ -3138,6 +3147,98 @@
       '</div>';
   }
 
+  /* ─── 예산 ───
+     예산은 「쓰기로 한 돈」이고 장부는 「실제로 쓴 돈」이다. 둘을 나란히
+     놓지 않으면 넘긴 걸 다 쓰고 나서야 안다. 대표가 행사마다 손으로
+     「최종 예산 대비 초과 746,000원」을 계산하던 게 이 자리다.
+
+     한 줄은 이렇게 생겼다.
+       y    연도
+       biz  사업 구분   — 사업 예산일 때
+       ev   행사        — 행사 예산일 때 (biz 는 비운다)
+       m    '' 이면 한 해 전체, '01'~'12' 면 그 달
+       amt  금액 · memo 메모
+  */
+  function bgYear(){ return S.bgY || String(new Date().getFullYear()); }
+  function bgList(){
+    return Object.keys(S.budgets).map(function(k){
+      var o=clone(S.budgets[k]); o.id=k; return o;
+    }).filter(function(o){ return String(o.y||'')===bgYear(); });
+  }
+  function bgYears(){
+    var m={}; m[String(new Date().getFullYear())]=1;
+    Object.keys(S.budgets).forEach(function(k){ var y=String((S.budgets[k]||{}).y||''); if(y) m[y]=1; });
+    return Object.keys(m).sort().reverse();
+  }
+  /* 실제로 나간 돈. 통장 사이 이동은 회사 밖으로 나간 게 아니다. */
+  function spentBiz(biz,y,m){
+    var out=0;
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{};
+      if(r.dir!=='out') return;
+      if(r.biz!==biz) return;
+      var on=String(r.on||'');
+      if(on.slice(0,4)!==String(y)) return;
+      if(m && on.slice(5,7)!==m) return;
+      out+=num(r.amt,0);
+    });
+    return out;
+  }
+  function spentEv(evId){ return evLedger(evId).out; }
+  function bgSpent(b){
+    return b.ev ? spentEv(b.ev) : spentBiz(b.biz, b.y, b.m||'');
+  }
+  function bgRate(b){
+    var a=num(b.amt,0); if(a<=0) return 0;
+    return bgSpent(b)/a;
+  }
+  function bgTotals(){
+    var L=bgList(), plan=0, used=0;
+    L.forEach(function(b){ plan+=num(b.amt,0); used+=bgSpent(b); });
+    return {plan:plan, used:used, left:plan-used, rate:plan>0?used/plan:0, n:L.length};
+  }
+  function saveBudget(id,body){
+    if(!S.db) return Promise.resolve();
+    if(!ledEditable()) return Promise.reject({code:'회계 역할을 가진 사람만 고칠 수 있습니다'});
+    var ref=id?S.db.doc('budgets/'+id):S.db.collection('budgets').doc();
+    body.updatedAt=nowISO(); body.by=S.me.id||'';
+    if(!id) body.createdAt=nowISO();
+    return ref.set(body);
+  }
+  function saveBgForm(){
+    var v=function(id){ var e=$('#'+id); return e?e.value:''; };
+    var kind=v('bgKind');
+    var amt=num(v('bgAmt'),0);
+    if(amt<=0) return errbar('예산 금액을 넣어주세요');
+    var body={ y:bgYear(), amt:amt, memo:v('bgMemo').trim(), m:'', biz:'', ev:'' };
+    if(kind==='ev'){
+      body.ev=v('bgEv');
+      if(!body.ev) return errbar('행사를 골라주세요');
+    } else {
+      body.biz=v('bgBiz');
+      if(!body.biz) return errbar('사업을 골라주세요');
+      body.m=v('bgM')||'';
+    }
+    var id=S.bgEdit==='new'?null:S.bgEdit;
+    saveBudget(id,body).then(function(){
+      S.bgEdit=null; S.bgKind=''; S.bgDraft=null; flash('저장했습니다'); render();
+    }).catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
+  }
+  function delBudget(id){
+    if(!S.db||!ledEditable()) return errbar('회계 역할을 가진 사람만 지울 수 있습니다');
+    S.db.doc('budgets/'+id).delete().then(function(){
+      S.bgDel=null; flash('지웠습니다'); render();
+    }).catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
+  }
+
+  /* 집행률 막대. 넘기면 빨갛게, 90%를 넘으면 주황으로 미리 알린다. */
+  function bgBar(rate){
+    var pct=Math.min(1,rate)*100;
+    var col = rate>1 ? 'var(--bad)' : (rate>0.9 ? 'var(--warn)' : 'var(--accent)');
+    return '<div style="height:7px;background:var(--line);border-radius:4px;overflow:hidden">'+
+      '<div style="height:100%;width:'+pct.toFixed(1)+'%;background:'+col+'"></div></div>';
+  }
+
   function saveLedForm(){
     var v=function(id){ var e=$('#'+id); return e?e.value:''; };
     var dir=v('ldDir')||'out';
@@ -3178,6 +3279,122 @@
         : '저장했습니다');
       render();
     }).catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+  }
+
+  function renderBudget(){
+    var canEdit=ledEditable();
+    var y=bgYear(), L=bgList(), T=bgTotals();
+    var biz=L.filter(function(b){return !b.ev;}).sort(function(a,b){
+      return (a.biz+(a.m||'')).localeCompare(b.biz+(b.m||''),'ko'); });
+    var evs=L.filter(function(b){return !!b.ev;});
+
+    var ed=S.bgEdit;
+    var cur=clone((ed&&ed!=='new')?(S.budgets[ed]||{}):{});
+    if(S.bgDraft){ cur.amt=S.bgDraft.amt||cur.amt; cur.memo=S.bgDraft.memo||cur.memo; }
+    var kindNow=S.bgKind||(cur.ev?'ev':'biz');
+    var form='';
+    if(ed&&canEdit){
+      form='<section class="card" style="margin-bottom:14px"><h2>'+(ed==='new'?'예산 잡기':'예산 고치기')+'</h2>'+
+        '<div class="row3">'+
+          '<div class="field"><label for="bgKind">무엇에</label><select id="bgKind">'+
+            '<option value="biz"'+(kindNow==='biz'?' selected':'')+'>사업</option>'+
+            '<option value="ev"'+(kindNow==='ev'?' selected':'')+'>행사</option></select></div>'+
+          (kindNow==='ev'
+            ? '<div class="field" style="grid-column:span 2"><label for="bgEv">행사</label><select id="bgEv">'+
+                '<option value="">— 고르세요 —</option>'+
+                evChoices().map(function(e){
+                  return '<option value="'+esc(e.id)+'"'+(cur.ev===e.id?' selected':'')+'>'+
+                    esc(e.name||'(이름 없음)')+(e.date?' · '+esc(e.date):'')+'</option>';
+                }).join('')+'</select></div>'
+            : '<div class="field"><label for="bgBiz">사업</label><select id="bgBiz">'+
+                '<option value="">— 고르세요 —</option>'+
+                BIZL().map(function(b){
+                  return '<option value="'+esc(b)+'"'+(cur.biz===b?' selected':'')+'>'+esc(b)+'</option>';
+                }).join('')+'</select></div>'+
+              '<div class="field"><label for="bgM">기간</label><select id="bgM">'+
+                '<option value=""'+(!cur.m?' selected':'')+'>'+esc(y)+'년 전체</option>'+
+                ['01','02','03','04','05','06','07','08','09','10','11','12'].map(function(m){
+                  return '<option value="'+m+'"'+(cur.m===m?' selected':'')+'>'+(+m)+'월</option>';
+                }).join('')+'</select></div>')+
+        '</div>'+
+        '<div class="row2">'+
+          '<div class="field"><label for="bgAmt">예산 금액</label>'+
+            '<input id="bgAmt" type="number" inputmode="numeric" value="'+esc(String(cur.amt||''))+'"></div>'+
+          '<div class="field"><label for="bgMemo">메모</label>'+
+            '<input id="bgMemo" value="'+esc(cur.memo||'')+'" placeholder="예: 최종 승인 예산 · 1차안"></div>'+
+        '</div>'+
+        '<div class="actions"><button class="btn primary" id="bgSave">저장</button>'+
+          '<button class="btn" id="bgCancel">취소</button></div>'+
+        '<p class="hint" style="margin-top:10px">집행액은 <b>장부에서 자동으로</b> 셉니다. '+
+          '사업 예산은 그 사업으로 나간 돈, 행사 예산은 그 행사에 매단 돈입니다. 통장 사이 이동은 뺍니다.</p>'+
+      '</section>';
+    }
+
+    var row=function(b,label,sub){
+      var used=bgSpent(b), plan=num(b.amt,0), left=plan-used, rate=plan>0?used/plan:0;
+      return '<tr>'+
+        '<td><b>'+esc(label)+'</b>'+
+          (sub?'<div style="font-size:12px;color:var(--muted)">'+esc(sub)+'</div>':'')+
+          (b.memo?'<div style="font-size:12px;color:var(--muted)">'+esc(b.memo)+'</div>':'')+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(plan)+'</td>'+
+        '<td class="num" style="font-family:var(--font-num)">'+won(used)+'</td>'+
+        '<td class="num" style="font-family:var(--font-num);font-weight:600'+(left<0?';color:var(--bad)':'')+'">'+
+          (left<0?('초과 '+won(-left)):won(left))+'</td>'+
+        '<td style="width:150px">'+bgBar(rate)+
+          '<div style="font-size:11.5px;color:var(--muted);margin-top:3px">'+Math.round(rate*100)+'%</div></td>'+
+        (canEdit?'<td style="width:110px">'+
+          (S.bgDel===b.id
+            ? '<button class="btn danger sm" data-bgyes="'+esc(b.id)+'">지움</button>'+
+              '<button class="btn sm" id="bgNo" style="margin-left:4px">취소</button>'
+            : '<button class="btn sm" data-bgedit="'+esc(b.id)+'">고침</button>'+
+              '<button class="del" data-bgdel="'+esc(b.id)+'" aria-label="삭제" style="margin-left:4px">×</button>')+
+        '</td>':'')+
+      '</tr>';
+    };
+
+    var head='<thead><tr><th>대상</th><th class="num">예산</th><th class="num">집행</th>'+
+      '<th class="num">남음</th><th>집행률</th>'+(canEdit?'<th></th>':'')+'</tr></thead>';
+
+    app.innerHTML=
+      '<div class="stack">'+
+      acctTabs()+
+      '<div class="tiles">'+
+        tile('예산 합계', won(T.plan), y+'년 · '+T.n+'건')+
+        tile('집행액', won(T.used), Math.round(T.rate*100)+'%', T.rate>1)+
+        tile('남은 예산', T.left<0?('초과 '+won(-T.left)):won(T.left),
+             T.left<0?'예산을 넘겼습니다':'', T.left<0)+
+        tile('넘긴 항목', L.filter(function(b){return bgRate(b)>1;}).length+'건',
+             L.filter(function(b){return bgRate(b)>0.9&&bgRate(b)<=1;}).length+'건이 90% 넘음',
+             L.filter(function(b){return bgRate(b)>1;}).length>0)+
+      '</div>'+
+      form+
+      '<section class="card"><h2>예산'+
+        (canEdit&&!ed?' <button class="btn primary sm" id="bgNew" style="float:right">예산 잡기</button>':'')+'</h2>'+
+        '<div class="field" style="max-width:160px;margin-bottom:14px"><label for="bgYsel">연도</label>'+
+          '<select id="bgYsel">'+bgYears().map(function(x){
+            return '<option value="'+esc(x)+'"'+(x===y?' selected':'')+'>'+esc(x)+'년</option>';
+          }).join('')+'</select></div>'+
+        (biz.length
+          ? '<h3 style="font-size:13.5px;margin:0 0 8px;color:var(--muted)">사업별</h3>'+
+            '<div class="scroll"><table>'+head+'<tbody>'+
+            biz.map(function(b){ return row(b, b.biz, b.m?((+b.m)+'월'):(y+'년 전체')); }).join('')+
+            '</tbody></table></div>'
+          : '')+
+        (evs.length
+          ? '<h3 style="font-size:13.5px;margin:18px 0 8px;color:var(--muted)">행사별</h3>'+
+            '<div class="scroll"><table>'+head+'<tbody>'+
+            evs.map(function(b){
+              var e=S.events[b.ev]||{};
+              return row(b, e.name||'(지워진 행사)', e.date||'');
+            }).join('')+'</tbody></table></div>'
+          : '')+
+        (!biz.length&&!evs.length
+          ? '<div class="empty" style="padding:28px 8px">'+esc(y)+'년 예산이 아직 없습니다.<br>'+
+            '사업이나 행사에 예산을 잡아두면 얼마나 썼는지 여기서 바로 보입니다.</div>'
+          : '<p class="hint" style="margin-top:12px">집행액은 장부에서 자동으로 셉니다. '+
+            '장부에 <b>사업 구분</b>이나 <b>행사</b>가 안 매달린 거래는 안 잡힙니다.</p>')+
+      '</section>'+
+      '</div>';
   }
 
   function renderBook(){
@@ -3951,7 +4168,7 @@
 
   function acctTabs(){
     return '<div class="tabs" style="margin:0 0 14px">'+
-      [['spend','지출 현황'],['book','장부'],['evpl','행사별'],['adv','대신결제'],['banks','통장']].map(function(x){
+      [['spend','지출 현황'],['book','장부'],['evpl','행사별'],['adv','대신결제'],['budget','예산'],['banks','통장']].map(function(x){
         return '<button type="button" data-amain="'+x[0]+'" aria-pressed="'+(S.acctMain===x[0]?'true':'false')+'">'+x[1]+
           (x[0]==='book'?'<span class="n">'+Object.keys(S.ledger).length+'</span>':'')+
           (x[0]==='adv'&&advOpen().length?'<span class="n">'+advOpen().length+'</span>':'')+
@@ -3963,6 +4180,7 @@
     if(S.acctMain==='book')  return renderBook();
     if(S.acctMain==='evpl')  return renderEvPl();
     if(S.acctMain==='adv')   return renderAdv();
+    if(S.acctMain==='budget') return renderBudget();
     if(S.acctMain==='banks') return renderBanks();
     var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
     var pending=approved.filter(function(d){return payState(d)!=='paid';});
@@ -5046,6 +5264,7 @@
       S.acctMain=el.dataset.amain; S.ledEdit=null; S.bankEdit=null; S.ledDraft=null;
       S.ledDel=null; S.bankDel=null;
       S.advEdit=null; S.advDraft=null; S.advPay=null; S.advDel=null; S.advBack=null;
+      S.bgEdit=null; S.bgDel=null; S.bgKind=''; S.bgDraft=null;
       remember(); render(); goTop(); return;
     }
     /* ── 개인별 급여 ── */
@@ -5054,6 +5273,14 @@
       S.personEdit=null; S.personDel=null; remember(); render(); goTop(); return;
     }
     if(t.id==='payBack'){ S.payWho=null; S.payYm=''; render(); goTop(); return; }
+    /* ── 예산 ── */
+    if(t.id==='bgNew'){ S.bgEdit='new'; S.bgKind=''; S.bgDraft=null; render(); return; }
+    if(t.id==='bgCancel'){ S.bgEdit=null; S.bgKind=''; S.bgDraft=null; render(); return; }
+    if(t.id==='bgSave'){ return saveBgForm(); }
+    if((el=t.closest('[data-bgedit]'))){ S.bgEdit=el.dataset.bgedit; S.bgKind=''; S.bgDraft=null; render(); return; }
+    if((el=t.closest('[data-bgdel]'))){ S.bgDel=el.dataset.bgdel; render(); return; }
+    if(t.id==='bgNo'){ S.bgDel=null; render(); return; }
+    if((el=t.closest('[data-bgyes]'))){ return delBudget(el.dataset.bgyes); }
     /* ── 대신결제 ── */
     if((el=t.closest('[data-adwho]'))){ S.advWho=el.dataset.adwho; render(); goTop(); return; }
     if(t.id==='adNew'){ S.advEdit='new'; S.advDraft=null; render(); return; }
@@ -5362,6 +5589,14 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='bgYsel'){ S.bgY=t.value; S.bgEdit=null; pickRender('bgYsel'); return; }
+    if(t.id==='bgKind'){
+      /* 사업↔행사를 바꾸면 칸이 달라진다. 적던 금액은 들고 넘어간다. */
+      var g=function(id){ var e=$('#'+id); return e?e.value:''; };
+      S.bgKind=t.value;
+      S.bgDraft={amt:num(g('bgAmt'),0), memo:g('bgMemo')};
+      pickRender('bgKind'); return;
+    }
     if(t.id==='mgTo'){ S.mergeTo=t.value; pickRender('mgTo'); return; }
     if(t.id==='payYm'){ S.payYm=t.value; pickRender('payYm'); return; }
     if(t.id==='adPayOn'){ S.advOn=t.value; return; }
@@ -6331,6 +6566,10 @@
         S.banks=next; render();
       },function(){});
 
+      S.db.collection('budgets').onSnapshot(function(snap){
+        var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
+        S.budgets=next; render();
+      },function(){});
       S.db.collection('adv').onSnapshot(function(snap){
         var next={}; snap.docs.forEach(function(d){ next[d.id]=clone(d.data()); });
         S.adv=next; render();
