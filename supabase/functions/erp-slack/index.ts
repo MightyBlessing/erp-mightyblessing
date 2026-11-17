@@ -243,7 +243,29 @@ function parseExpense(text: string) {
   };
 }
 
-async function slashExpense(text: string, who: string) {
+/* 채널이 곧 사업이다. #campus-worship 에서 친 지출은 캠퍼스워십 것이다.
+   매번 행사를 골라 넣으라고 하면 결국 안 고르고, 행사별 수지가 빈다.
+   정산 화면의 「슬랙 채널」 칸에 적어 두면 여기서 찾는다. */
+async function eventOfChannel(chId: string, chName: string) {
+  const norm = (x: string) => String(x || "").trim().replace(/^#/, "").toLowerCase();
+  const id = norm(chId), nm = norm(chName);
+  if (!id && !nm) return null;
+  let rows;
+  try {
+    rows = await docs("events");
+  } catch {
+    return null;
+  }
+  for (const r of rows) {
+    const tag = norm(String((r.data as any)?.slackCh || ""));
+    if (tag && (tag === id || tag === nm)) {
+      return { id: r.id, name: String((r.data as any)?.name || "") };
+    }
+  }
+  return null;
+}
+
+async function slashExpense(text: string, who: string, chId = "", chName = "") {
   const got = parseExpense(text);
   if (!got || !got.payee) {
     return ephemeral(
@@ -251,6 +273,7 @@ async function slashExpense(text: string, who: string) {
         "`거래처 금액 내역` 순서입니다. 내역은 없어도 됩니다.",
     );
   }
+  const ev = await eventOfChannel(chId, chName);
   const rows = await docs("docs");
   const now = new Date().toISOString();
   const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
@@ -259,7 +282,7 @@ async function slashExpense(text: string, who: string) {
     title: "지출결의서",
     no: nextExpenseNo(rows),
     date: todayKST(),
-    eventId: "",
+    eventId: ev?.id || "",
     account: "기타",
     method: "bank",
     payee: got.payee,
@@ -298,6 +321,11 @@ async function slashExpense(text: string, who: string) {
   return ephemeral(
     `:memo: *지출결의서 초안* — ${got.payee} ${won(got.amt)}` +
       (got.what ? `\n${got.what}` : "") +
+      (ev
+        ? `\n*행사* ${ev.name}`
+        : chName
+        ? `\n_이 채널에 묶인 행사가 없습니다. 행사 없이 들어왔습니다._`
+        : "") +
       `\n:arrow_upper_right: <${base()}#docs/${id}|ERP에서 열어 올리기>` +
       `\n_아직 올라가지 않았습니다. 열어서 확인하고 상신해 주세요._`,
   );
@@ -314,6 +342,8 @@ function kindOf(w: string) {
 async function slash(raw: string) {
   const f = new URLSearchParams(raw);
   const who = f.get("user_name") || "누군가";
+  const chId = f.get("channel_id") || "";
+  const chName = f.get("channel_name") || "";
   let text = (f.get("text") || "").trim();
   let kind = kindOf(f.get("command") || "");
   if (!kind) {
@@ -321,7 +351,7 @@ async function slash(raw: string) {
     kind = kindOf(first);
     text = rest.join(" ");
   }
-  if (kind === "expense") return await slashExpense(text, who);
+  if (kind === "expense") return await slashExpense(text, who, chId, chName);
   return ephemeral(
     "쓸 수 있는 것 — `지출`\n예) `/지출 교촌치킨 52000 스태프 야식`",
   );

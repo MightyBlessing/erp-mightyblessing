@@ -4197,6 +4197,9 @@
         '<section class="card"><h2>행사</h2>'+
           fld('text','evName','행사명',ev.name,dis)+
           '<div class="row2">'+fld('text','evDate','일자',ev.date,dis)+fld('text','evPlace','장소',ev.place,dis)+'</div>'+
+          fld('text','evSlack','슬랙 채널',ev.slackCh,dis)+
+          (ro?'':'<p class="hint" style="margin:-4px 0 0">이 채널에서 <b>/지출</b> 을 치면 이 행사로 달립니다. '+
+            '예: <b>#campus-worship</b> · 비워 두면 행사 없이 들어옵니다.</p>')+
           '<div class="field"><label>잔여액 산출</label><div class="seg">'+
             sg('mDirect','직접 입력',ev.mode!=='calc',ro)+sg('mCalc','수입 − 운영비 − 세금',ev.mode==='calc',ro)+'</div></div>'+
           (ev.mode==='calc'
@@ -5921,7 +5924,7 @@
       }
       if(fl==='w'||fl==='pt')render(); return;
     }
-    var fmap={evName:'name',evDate:'date',evPlace:'place',net:'net',rev:'rev',opex:'opex',tax:'tax',rate:'rate',ratio:'ratio',cap:'cap',unit:'unit'};
+    var fmap={evName:'name',evDate:'date',evPlace:'place',evSlack:'slackCh',net:'net',rev:'rev',opex:'opex',tax:'tax',rate:'rate',ratio:'ratio',cap:'cap',unit:'unit'};
     if(fmap[t.id]){ ev[fmap[t.id]]=t.value; touch('ev',ev.id); softNumbers(ev); }
    }catch(err){ errbar('입력 처리 중 '+(err&&err.message||err)); }
   });
