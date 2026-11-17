@@ -662,10 +662,14 @@ Deno.serve(async (req) => {
         });
       }
       const ev = body.event || {};
+      /* 영수증이 없어도 받는다. 「사진이 있을 때만 된다」는 규칙은
+         안 될 때 왜 안 되는지가 안 보인다 — 아무 일도 안 일어나니까.
+         「지출로 시작하면 생긴다」 하나면 외울 게 없다. */
       const mine = ev.type === "message" &&
-        !ev.bot_id && ev.subtype !== "message_changed" &&
-        (ev.files || []).length > 0 &&
-        /^\s*\/?지출\b/.test(String(ev.text || ""));
+        /* 사진을 붙인 글은 subtype 이 file_share 로 온다. 그것도 받아야 한다.
+           고친 글(message_changed)·지운 글은 거른다. */
+        !ev.bot_id && (!ev.subtype || ev.subtype === "file_share") &&
+        /^\s*\/?지출\s/.test(String(ev.text || ""));
       /* 슬랙은 3초 안에 200 을 못 받으면 같은 사건을 다시 보낸다.
          먼저 200 을 주고 뒤에서 일한다. 중복은 event_id 로 거른다. */
       if (mine) {
