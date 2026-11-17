@@ -391,6 +391,7 @@
 
 <div id="printroot" aria-hidden="true"></div>
 <datalist id="plist"></datalist>
+<datalist id="parties"></datalist>
 
 <div class="shell">
   <aside class="rail">
@@ -568,7 +569,7 @@
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
     lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
-    budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null};
+    budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null,fold:{}};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -1272,6 +1273,7 @@
     renderBell();
     renderWho();
     renderPeopleList();
+    renderPartyList();
   }
   /* 정산표 이름칸이 쓰는 목록. 화면마다 다시 만들지 않고 한 장만 둔다. */
   function renderPeopleList(){
@@ -1670,7 +1672,10 @@
         '<span style="flex:1"></span>'+delCtl+'</div>'+
       (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
       '<div class="cols"><div class="stack">'+
-        '<section class="card"><h2>문서 정보</h2>'+
+        '<section class="card"><h2>문서 정보'+
+          (editable&&autoTitle(d)&&autoTitle(d)!==d.title
+            ? ' <button class="btn sm" id="xAuto" style="float:right">제목 자동 작성</button>' : '')+
+          '</h2>'+
           fld('text','xTitle','제목',d.title,dis)+
           '<div class="row2">'+fld('text','xNo','문서번호',d.no,dis)+fld('text','xDate','기안일자',d.date,dis)+'</div>'+
           '<div class="field"><label for="xEvent">행사 / 사업</label><select id="xEvent"'+dis+'>'+evOpts+'</select></div>'+
@@ -1683,8 +1688,11 @@
           fld('text','xDue','지급 희망일',d.dueDate,dis)+
         '</section>'+
         '<section class="card"><h2>받는 사람</h2>'+
-          fld('text','xPayee','성명 / 상호',d.payee,dis)+
+          '<div class="field"><label for="xPayee">성명 / 상호</label>'+
+            '<input id="xPayee" list="parties" autocomplete="off" value="'+esc(d.payee||'')+'"'+dis+
+            ' placeholder="치면 지금까지 적은 곳이 내려옵니다"></div>'+
           '<div class="row2">'+fld('text','xBank','은행',d.payeeBank,dis)+fld('text','xAcct','계좌번호',d.payeeAcct,dis)+'</div>'+
+          (editable?'<p class="hint" style="margin:-4px 0 0">명부나 예전 문서에 계좌가 있으면 이름을 고르는 순간 아래가 채워집니다.</p>':'')+
         '</section>'+
         '<section class="card"><h2>결재선</h2>'+
           (lineUI?'<div class="people">'+lineUI+'</div>':'<div class="empty" style="padding:18px 8px">결재자를 추가하세요.</div>')+
@@ -1700,10 +1708,11 @@
             '<b>합계</b><b id="xTotal" style="font-family:var(--font-num);font-size:17px">'+won(total)+'</b></div>'+
         '</section>'+
         evidenceCard(d)+
-        '<section class="card"><h2>지출 사유</h2>'+
-          '<textarea id="xNote" rows="3"'+dis+' placeholder="무엇을 위한 지출인지 적어주세요">'+esc(d.note||'')+'</textarea>'+
-        '</section>'+
-        '<section class="card"><h2>미리보기</h2>'+expensePreview(d)+'</section>'+
+        foldCard('xnote','지출 사유',
+          '<textarea id="xNote" rows="3"'+dis+' placeholder="무엇을 위한 지출인지 적어주세요">'+esc(d.note||'')+'</textarea>',
+          {open:!!(d.note||'').trim()||editable,
+           sum:(d.note||'').trim()?esc((d.note||'').trim().slice(0,24)):'비어 있습니다'})+
+        foldCard('xprev','미리보기',expensePreview(d),{open:false,sum:'눌러서 펼치기'})+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
           (st==='approved'?'<p class="hint" style="margin:10px 0 0">PDF는 파일로 바로 내려받습니다.</p>':'')+
@@ -1981,6 +1990,96 @@
       (editable?'<div class="actions" style="margin-top:10px"><button class="btn sm" id="atAdd">+ 붙임 추가</button></div>':'')+
       '<p class="hint" style="margin-top:10px">문서 끝에 <b>붙임  OOO 1부.　끝.</b> 으로 들어갑니다. 아래에서 파일을 올리면 한 줄이 저절로 생깁니다.</p>'+
     '</section>';
+  }
+
+  /* ─── 접는 카드 ───
+     한 화면에 카드가 아홉 개씩 쌓이면 아래쪽은 아무도 안 본다. 자주 안
+     건드리는 건 접어 두고, 접었을 때도 안에 뭐가 들었는지 한 줄로 보여준다.
+     접힌 채로 비어 있으면 안 채운 줄도 모르고 올리게 된다.
+
+     <details> 를 안 쓰고 직접 다룬다. 글자를 칠 때마다 화면을 다시 그리는데
+     그때 브라우저가 열림 상태를 되돌려 버린다. */
+  function folded(k,defOpen){
+    var v=S.fold[k];
+    return (v===undefined) ? !defOpen : !v;
+  }
+  function foldCard(k,title,body,opt){
+    opt=opt||{};
+    var off=folded(k,opt.open!==false);
+    return '<section class="card">'+
+      '<h2 style="cursor:pointer;display:flex;align-items:center;gap:8px;margin-bottom:'+(off?'0':'14px')+'" data-fold="'+esc(k)+'">'+
+        '<span style="display:inline-block;width:12px;transition:transform .12s;transform:rotate('+(off?'0':'90')+'deg);color:var(--muted)">▸</span>'+
+        '<span>'+title+'</span>'+
+        (opt.badge?'<span style="font-weight:400;font-size:12.5px;color:var(--muted)">'+opt.badge+'</span>':'')+
+        '<span style="flex:1"></span>'+
+        (off&&opt.sum?'<span style="font-weight:400;font-size:12.5px;color:var(--muted)">'+opt.sum+'</span>':'')+
+      '</h2>'+
+      (off?'':body)+
+    '</section>';
+  }
+
+  /* ─── 거래처 고르기 ───
+     받는 사람·거래처를 매번 손으로 친다. 「사운드테크」와 「사운드테크 」가
+     다른 곳이 되고, 계좌번호는 또 어딘가에서 찾아 옮겨 적는다.
+     지금까지 적은 이름을 모아 내려준다. */
+  function partyChoices(){
+    var m={};
+    Object.keys(S.docs).forEach(function(k){
+      var d=S.docs[k]||{}; var n=String(d.payee||'').trim();
+      if(n) m[n]=m[n]||{n:n, bank:d.payeeBank||'', acct:d.payeeAcct||'', c:0};
+      if(n) m[n].c++;
+    });
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{}; var n=String(r.party||'').trim();
+      if(!n) return;
+      m[n]=m[n]||{n:n, bank:'', acct:'', c:0}; m[n].c++;
+    });
+    peopleList().forEach(function(pp){
+      var n=(pp.name||'').trim(); if(!n) return;
+      m[n]=m[n]||{n:n, bank:'', acct:'', c:0};
+      if(!m[n].bank&&pp.bank) m[n].bank=pp.bank;
+      if(!m[n].acct&&pp.acct) m[n].acct=pp.acct;
+    });
+    return Object.keys(m).map(function(n){return m[n];})
+      .sort(function(a,b){ return b.c-a.c || a.n.localeCompare(b.n,'ko'); });
+  }
+  function partyInfo(nm){
+    nm=String(nm||'').trim(); if(!nm) return null;
+    var hit=partyChoices().filter(function(x){ return x.n===nm; })[0];
+    return hit||null;
+  }
+  function renderPartyList(){
+    var dl=document.getElementById('parties'); if(!dl) return;
+    var L=partyChoices();
+    var key=L.map(function(x){return x.n;}).join('|');
+    if(dl.getAttribute('data-k')===key) return;
+    dl.setAttribute('data-k',key);
+    dl.innerHTML=L.map(function(x){
+      return '<option value="'+esc(x.n)+'">'+esc(x.bank?(x.bank+' '+(x.acct||'')):'')+'</option>';
+    }).join('');
+  }
+
+  /* ─── 제목 자동 작성 ───
+     「지출결의서」라는 제목이 목록에 열 줄 늘어서면 어느 게 어느 건지 모른다.
+     적어둔 내용으로 만들어 준다. */
+  function autoTitle(d){
+    if(!d) return '';
+    if(d.type==='expense'){
+      var items=(d.items||[]).filter(function(it){return (it.name||'').trim();});
+      var head=items.length?items[0].name.trim():'';
+      var more=items.length>1?(' 외 '+(items.length-1)+'건'):'';
+      var who=String(d.payee||'').trim();
+      if(!head) return who?(who+' 지출'):'';
+      return head+more+(who?(' · '+who):'');
+    }
+    var A=applySchema(d.type);
+    if(A){
+      if(d.type==='trip')     return [d.where,d.from&&(d.from+(d.to&&d.to!==d.from?('~'+d.to):''))].filter(Boolean).join(' · ');
+      if(d.type==='purchase') return [d.item,d.vendor].filter(Boolean).join(' · ');
+      if(d.type==='goods')    return [d.item,d.qty].filter(Boolean).join(' ');
+      if(d.type==='general')  return String(d.why||'').trim().split(/\n/)[0].slice(0,30);
+    }
+    return '';
   }
 
   function fld(type,id,label,val,dis){
@@ -5264,6 +5363,11 @@
       S.personEdit=null; S.personDel=null; remember(); render(); goTop(); return;
     }
     if(t.id==='payBack'){ S.payWho=null; S.payYm=''; render(); goTop(); return; }
+    if((el=t.closest('[data-fold]'))){
+      var fk=el.dataset.fold;
+      S.fold[fk]=folded(fk,true);   /* 지금 접혀 있으면 펴고, 펴져 있으면 접는다 */
+      render(); return;
+    }
     /* ── 예산 ── */
     if(t.id==='bgNew'){ S.bgEdit='new'; S.bgKind=''; S.bgDraft=null; render(); return; }
     if(t.id==='bgCancel'){ S.bgEdit=null; S.bgKind=''; S.bgDraft=null; render(); return; }
@@ -5476,6 +5580,11 @@
       if(sc) return setSched(sc,'');
       return;
     }
+    if(t.id==='xAuto'){
+      var ad2=S.docSel&&S.docs[S.docSel];
+      if(ad2){ var nt=autoTitle(ad2); if(nt){ ad2.title=nt; touch('doc',ad2.id); flash('제목을 넣었습니다'); render(); } }
+      return;
+    }
     if(t.id==='newExp') return newDoc('expense');
     if((el=t.closest('[data-newap]'))) return newDoc(el.dataset.newap);
     if(t.id==='dback'){ S.docSel=null; S.confirmDocDel=null; remember(); render(); return; }
@@ -5540,6 +5649,21 @@
   document.addEventListener('input',function(e){
    try{
     var t=e.target;
+    /* 지금까지 적어둔 곳을 고르면 은행·계좌를 같이 채운다.
+       빈 칸만 채운다 — 손으로 고쳐 둔 값을 덮으면 안 된다. */
+    if(t.id==='xPayee'){
+      var pd=S.docSel&&S.docs[S.docSel];
+      if(pd){
+        pd.payee=t.value;
+        var pi=partyInfo(t.value);
+        var bk=$('#xBank'), ac=$('#xAcct');
+        if(pi){
+          if(pi.bank&&bk&&!bk.value){ bk.value=pi.bank; pd.payeeBank=pi.bank; }
+          if(pi.acct&&ac&&!ac.value){ ac.value=pi.acct; pd.payeeAcct=pi.acct; }
+        }
+        touch('doc',pd.id); return;
+      }
+    }
     /* 신청서 칸은 서식마다 다르니 이름으로 받지 않고 data-apk 로 받는다. */
     if(t.dataset&&t.dataset.apk){
       var ad=S.docSel&&S.docs[S.docSel];
