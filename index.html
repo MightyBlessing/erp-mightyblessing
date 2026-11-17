@@ -1618,7 +1618,8 @@
     var lineUI=(d.steps||[]).map(function(x,i){
       var tag=x.state==='approved'?'<span class="pill p-approved">승인</span>':x.state==='rejected'?'<span class="pill p-rejected">반려</span>':'<span class="pill p-pending">대기</span>';
       return '<div class="person"><span style="font-family:var(--font-num);color:var(--muted);width:14px">'+(i+1)+'</span>'+
-        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+tag+
+        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+
+        '<span style="font-size:11.5px;color:var(--muted)">'+stepRole(x,i)+'</span>'+tag+
         (editable?'<button class="del" data-lndel="'+i+'" aria-label="결재자 제거">×</button>':'')+'</div>';
     }).join('');
 
@@ -1720,6 +1721,11 @@
         '<section class="card"><h2>결재선</h2>'+
           (lineUI?'<div class="people">'+lineUI+'</div>':'<div class="empty" style="padding:18px 8px">결재자를 추가하세요.</div>')+
           (editable?'<div class="field" style="margin-top:12px"><input id="lnSearch" placeholder="이름으로 검색해 결재자 추가" autocomplete="off"></div><div class="people" id="lnResults"></div>':'')+
+          (editable&&coopAddable(d)
+            ? '<div class="actions" style="margin-top:8px"><button class="btn sm" id="xCoop">+ 회계 협조</button></div>'+
+              '<p class="hint" style="margin:6px 0 0">돈이 나가는 문서는 회계가 한 번 보는 게 안전합니다. '+
+                '통장에 돈이 있는지, 계정과목이 맞는지를 봅니다.</p>'
+            : '')+
           '<p class="hint" style="margin-top:8px">위에서부터 순서대로 결재합니다.</p>'+
         '</section>'+
       '</div><div class="stack" style="min-width:0">'+
@@ -1760,6 +1766,7 @@
     var ev=d.eventId&&S.events[d.eventId];
     return '<div class="doc">'+
       docHead('지 출 결 의 서')+'<hr>'+
+      signBox(d)+
       '<div class="to"><b>문서번호</b>'+esc(d.no||'—')+'</div>'+
       '<div class="to"><b>기안일자</b>'+esc(d.date||'—')+'</div>'+
       '<div class="to"><b>행　　사</b>'+esc(ev?(ev.name||''):'—')+'</div>'+
@@ -1799,6 +1806,20 @@
 
   /* 종이로 내는 신청서에는 누가 쓰고 누가 결재했는지가 문서 안에 있어야 한다.
      화면의 결재선은 화면에만 있다. 인쇄하면 사라진다. */
+  /* 협조는 결재와 다르다. 「이 돈을 써도 되는가」를 정하는 게 결재라면,
+     협조는 「통장에 돈이 있는가, 계정과목이 맞는가」를 보는 자리다.
+     순서는 같은 줄에 세운다 — 따로 돌리면 둘 다 기다리다 아무도 안 본다. */
+  /* 회계 역할인 사람 중 아직 결재선에 없는 사람. 없으면 단추를 안 보인다 —
+     누를 수 없는 단추를 보여 주는 건 거짓말이다. */
+  function coopPick(d){
+    var on={}; (d.steps||[]).forEach(function(x){ on[x.uid]=1; });
+    return accountingUids().filter(function(u){ return !on[u]; });
+  }
+  function coopAddable(d){ return coopPick(d).length>0; }
+  function stepRole(x,i){
+    if(x&&x.role==='coop') return '협조';
+    return i===0?'기안':'결재';
+  }
   function signBox(d){
     var L=(d.steps||[]);
     if(!L.length) return '';
@@ -1812,7 +1833,7 @@
        종이 문서도 결재란은 제목 위, 오른쪽에 따로 놓는다. */
     return '<div style="text-align:right;margin:6px 0 2px">'+
       '<table style="width:auto;display:inline-table;border-collapse:collapse">'+
-      '<tr>'+L.map(function(x,i){ return '<th style="'+th+'">'+(i===0?'기안':'결재')+'</th>'; }).join('')+'</tr>'+
+      '<tr>'+L.map(function(x,i){ return '<th style="'+th+'">'+stepRole(x,i)+'</th>'; }).join('')+'</tr>'+
       '<tr>'+L.map(function(x){
         return '<td style="'+td+'">'+esc(nameOf(x.uid))+
           (x.state==='approved'?' <span style="color:var(--accent-ink)">(인)</span>'
@@ -1871,7 +1892,8 @@
     var lineUI=(d.steps||[]).map(function(x,i){
       var tag=x.state==='approved'?'<span class="pill p-approved">승인</span>':x.state==='rejected'?'<span class="pill p-rejected">반려</span>':'<span class="pill p-pending">대기</span>';
       return '<div class="person"><span style="font-family:var(--font-num);color:var(--muted);width:14px">'+(i+1)+'</span>'+
-        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+tag+
+        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+
+        '<span style="font-size:11.5px;color:var(--muted)">'+stepRole(x,i)+'</span>'+tag+
         (editable?'<button class="del" data-lndel="'+i+'" aria-label="결재자 제거">×</button>':'')+'</div>';
     }).join('');
     var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
@@ -5696,6 +5718,14 @@
       if(t.id==='atAdd'){ dc.att=(dc.att||[]).concat([{t:''}]); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-atdel]'))){ (dc.att||[]).splice(+el.dataset.atdel,1); touch('doc',dc.id); render(); return; }
       if((el=t.closest('[data-lndel]'))){ dc.steps.splice(+el.dataset.lndel,1); touch('doc',dc.id); render(); return; }
+      if(t.id==='xCoop'){
+        var cu=coopPick(dc)[0]; if(!cu) return;
+        /* 기안자 바로 뒤에 끼운다. 결재가 다 끝난 뒤에 회계가 보면
+           이미 늦다 — 그때는 되돌리는 일이 된다. */
+        var ss=(dc.steps||[]).slice();
+        ss.splice(ss.length?1:0, 0, {uid:cu, role:'coop', state:'pending', comment:'', at:''});
+        dc.steps=ss; touch('doc',dc.id); render(); return;
+      }
       if((el=t.closest('[data-lnadd]'))){
         dc.steps=(dc.steps||[]).concat([{uid:el.dataset.lnadd,state:'pending',comment:'',at:''}]);
         touch('doc',dc.id); render(); return;
