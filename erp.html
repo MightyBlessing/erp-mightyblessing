@@ -1816,6 +1816,73 @@
     return Object.keys(m).sort(function(a,b){return a.localeCompare(b,'ko');})
       .map(function(n){ return {n:n, c:m[n]}; });
   }
+  /* 명부에서 지워진 사람을 아직 가리키고 있는 정산표 줄.
+     이름은 줄에 남아 있으니 돈 기록이 날아간 건 아니다. 길만 끊겼다. */
+  function orphanRows(){
+    var m={};
+    Object.keys(S.events).forEach(function(k){
+      var ev=S.events[k];
+      (ev.members||[]).forEach(function(x){
+        if(!x||!x.pid||livePid(x.pid)) return;
+        var n=String(x.n||'').trim()||'(이름 없음)';
+        if(!m[n]) m[n]={n:n, c:0, evs:{}, fix:personByName(n)};
+        m[n].c++; m[n].evs[ev.name||'(이름 없음)']=1;
+      });
+    });
+    return Object.keys(m).sort(function(a,b){return a.localeCompare(b,'ko');})
+      .map(function(n){ var o=m[n]; o.evList=Object.keys(o.evs); return o; });
+  }
+
+  /* 끊긴 줄을 다시 이어 붙인다. 같은 이름이 명부에 있으면 그리로,
+     없으면 명부에 한 줄 만들고 나서 잇는다. */
+  function fixOrphans(){
+    if(!S.db||S.linking) return;
+    var L=orphanRows(); if(!L.length) return;
+    S.linking=true; render();
+    var need=L.filter(function(o){ return !o.fix; });
+    var seq=Promise.resolve();
+    need.forEach(function(o){
+      seq=seq.then(function(){
+        return savePerson(null,{name:o.n,phone:'',bank:'',acct:'',taxRole:'',note:''});
+      }).catch(function(){});
+    });
+    seq.then(function(){
+      S.linking=false;
+      flash(need.length?(need.length+'명을 명부에 다시 올렸습니다. 이어 붙입니다.')
+                       :'명부에 있는 이름으로 이어 붙입니다.');
+      /* 구독이 새 사람을 내려줄 틈을 준다 */
+      setTimeout(function(){ relinkOrphans(); }, 900);
+    });
+  }
+  /* 끊긴 pid 를 지우고 이름으로 다시 잇는다. linkAll 이 pid 없는 줄만 보기 때문에
+     먼저 끊긴 pid 를 비워줘야 한다. */
+  function relinkOrphans(){
+    if(!S.db||S.linking) return;
+    S.linking=true; render();
+    var jobs=[], n=0;
+    Object.keys(S.events).forEach(function(k){
+      var ev=clone(S.events[k]), hit=false;
+      (ev.members||[]).forEach(function(x){
+        if(!x||!x.pid||livePid(x.pid)) return;
+        var pp=personByName(String(x.n||'').trim());
+        if(pp){ x.pid=pp.id; x.n=pp.name; } else { x.pid=''; }
+        hit=true; n++;
+      });
+      if(!hit) return;
+      delete ev.id; ev.updatedAt=nowISO();
+      jobs.push({k:k, body:ev});
+    });
+    var seq=Promise.resolve();
+    jobs.forEach(function(j){
+      seq=seq.then(function(){ return S.db.doc('events/'+j.k).set(j.body); }).catch(function(){});
+    });
+    seq.then(function(){
+      S.linking=false;
+      flash(n?('끊겨 있던 '+n+'줄을 이어 붙였습니다'):'이어 붙일 것이 없습니다');
+      render();
+    });
+  }
+
   /* 「최현영」과 「현영」처럼 한쪽이 다른 쪽 이름으로 끝나면 같은 사람일 때가 많다.
      동명이인이 없다는 전제이니, 찾아만 주고 합칠지는 사람이 고른다. */
   function sameLooking(){
@@ -3172,6 +3239,7 @@
                 (S.linking?'올리는 중…':mn.length+'명 명부에 올리기')+'</button></div>'+
           '</div>'
         : '')+
+      orphanBox()+
       sameBox()+
       mergeBox()+
       form+
@@ -3191,6 +3259,31 @@
     var qb=$('#pQ');
     if(qb) qb.addEventListener('input',function(){ S.peopleQ=qb.value; renderPeople(); $('#pQ').focus(); });
   }
+  /* 끊긴 연결. 사람을 지워서 급여가 안 보이게 된 줄들이 여기 모인다. */
+  function orphanBox(){
+    var L=orphanRows(); if(!L.length) return '';
+    var tot=L.reduce(function(a,o){ return a+o.c; },0);
+    return '<div class="note n-bad" style="margin:0 0 14px">'+
+      '<b>끊긴 연결 '+tot+'줄 ('+L.length+'명)</b> — 명부에서 지워진 사람을 아직 가리키고 있습니다. '+
+      '이름은 정산표에 남아 있으니 <b>받은 돈 기록이 없어진 건 아닙니다.</b> 길만 끊겨서 급여 화면에 안 보일 뿐입니다.'+
+      '<div class="scroll" style="margin-top:10px"><table><thead><tr>'+
+        '<th>이름</th><th>행사</th><th class="num">줄</th><th>어떻게 됩니까</th></tr></thead><tbody>'+
+      L.map(function(o){
+        return '<tr><td><b>'+esc(o.n)+'</b></td>'+
+          '<td style="font-size:12.5px;color:var(--muted)">'+esc(o.evList.slice(0,3).join(' · '))+
+            (o.evList.length>3?' 외 '+(o.evList.length-3):'')+'</td>'+
+          '<td class="num">'+o.c+'</td>'+
+          '<td style="font-size:12.5px">'+(o.fix
+            ? '명부의 <b>'+esc(o.fix.name)+'</b> 에 이어 붙입니다'
+            : '명부에 <b>'+esc(o.n)+'</b> 을(를) 다시 만들어 잇습니다')+'</td></tr>';
+      }).join('')+'</tbody></table></div>'+
+      '<div class="actions" style="margin-top:10px">'+
+        '<button class="btn primary sm" id="pFixOrphan"'+(S.linking?' disabled':'')+'>'+
+          (S.linking?'잇는 중…':'끊긴 '+tot+'줄 이어 붙이기')+'</button></div>'+
+      '<p class="hint" style="margin:8px 0 0">이어 붙인 뒤, 같은 사람이 둘로 갈려 있으면 아래에서 합치시면 됩니다.</p>'+
+    '</div>';
+  }
+
   /* 같은 사람으로 보이는 짝을 먼저 보여준다. 합칠지는 사람이 고른다. */
   function sameBox(){
     var L=sameLooking(); if(!L.length) return '';
@@ -4418,6 +4511,7 @@
     if(t.id==='pRegAll') return registerAll();
     if(t.id==='pMemAll') return registerMembers();
     if(t.id==='pLink')   return linkAll();
+    if(t.id==='pFixOrphan') return fixOrphans();
     if(t.id==='pfSave'){
       var nm=($('#pfName')&&$('#pfName').value||'').trim();
       if(!nm) return errbar('이름을 넣어주세요');
