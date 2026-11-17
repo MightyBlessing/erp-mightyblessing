@@ -402,6 +402,27 @@ async function slash(raw: string) {
    나면 조용히 안 걸린다 — 「행사 없음」으로 들어와 버린다. 골라서 넣게 한다.
    봇 토큰은 여기 서버에만 둔다. 브라우저에 실으면 그 토큰으로 워크스페이스
    전체를 읽을 수 있다. */
+/* 결재는 당사자 일이다. 채널에 다 뿌리면 남의 일이 하루 종일 흘러가고,
+   그러다 자기 차례도 같이 흘려보낸다. 이메일로 슬랙 사람을 찾아 쪽지로 보낸다.
+   못 찾으면 채널로 보낸다 — 조용히 사라지는 것보다 낫다. */
+async function dmByEmail(mail: string, text: string) {
+  if (!mail || !env("SLACK_BOT_TOKEN")) return false;
+  const who: any = await slackApi("users.lookupByEmail", { email: mail });
+  const uid = who?.user?.id;
+  if (!uid) return false;
+  const tok = env("SLACK_BOT_TOKEN");
+  const r = await fetch(SLACK + "chat.postMessage", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tok}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ channel: uid, text }),
+  });
+  const j = await r.json().catch(() => ({ ok: false }));
+  return !!j?.ok;
+}
+
 async function slackChannels() {
   const tok = env("SLACK_BOT_TOKEN");
   if (!tok) {
@@ -753,6 +774,8 @@ Deno.serve(async (req) => {
 
       const text = String(body.text || "").slice(0, 3500);
       if (!text) return J({ ok: false, error: "보낼 내용이 없습니다" }, 400);
+      const to = String(body.to || "").trim();
+      if (to && await dmByEmail(to, text)) return J({ ok: true, dm: true });
       return J(await postSlack(text, !!body.money));
     }
 

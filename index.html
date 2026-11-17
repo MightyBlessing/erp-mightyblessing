@@ -954,19 +954,30 @@
       }
       rows.push(['결재선', lineText(d)||'—']);
 
+      var waiting=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';});
+      var turn=waiting[0]&&waiting[0].uid;
+
       if(kind==='submit')
         slackSay('ask', {what:kindName, sub:ymdKo(d.date||today())+' · 기안 '+who,
-          rows:rows, link:appLink('docs',d.id), cta:'결재하러 가기'});
+          rows:rows, link:appLink('docs',d.id), cta:'결재하러 가기',
+          to:mailOf(turn)});
       else if(kind==='approve'){
-        var left=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';});
-        if(!left.length)
+        if(!waiting.length)
           slackSay('ok', {what:kindName, sub:'기안 '+who+' · 마지막 승인 '+me,
             rows:rows, link:appLink('docs',d.id),
-            foot:(d.type==='expense'?'지급 처리를 기다립니다.':'')});
+            foot:(d.type==='expense'?'지급 처리를 기다립니다.':''),
+            to:mailOf(d.drafter)});
+        else
+          /* 다음 사람 차례다. 이 한 줄이 없으면 앞사람이 승인한 걸
+             뒷사람이 모른다 — ERP 를 켜 봐야 안다. */
+          slackSay('ask', {what:kindName, sub:me+' 님이 승인했습니다 · 기안 '+who,
+            rows:rows, link:appLink('docs',d.id), cta:'결재하러 가기',
+            to:mailOf(turn)});
       }
       else if(kind==='reject')
         slackSay('no', {what:kindName, sub:me+' 님이 반려했습니다 · 기안 '+who,
-          rows:rows, link:appLink('docs',d.id), cta:'다시 작성하기'});
+          rows:rows, link:appLink('docs',d.id), cta:'다시 작성하기',
+          to:mailOf(d.drafter)});
     }catch(e){}
     var pend=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';})
                           .map(function(x){return x.uid;});
@@ -5186,14 +5197,20 @@
       headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
       .then(function(){ return true; }).catch(function(){ return false; });
   }
-  function slackPost(text,money,hook){
+  /* 결재는 당사자 일이다. 채널에 다 뿌리면 남의 일이 하루 종일 흘러가고,
+     그러다 자기 차례도 같이 흘려보낸다. 당사자에게 쪽지로 보낸다. */
+  function mailOf(uid){
+    var m=(S.members||{})[uid];
+    return (m&&m.email)||'';
+  }
+  function slackPost(text,money,hook,to){
     var url=fnUrl();
     if(!url) return hookPost(text,hook);
     return sbToken().then(function(tok){
       if(!tok) return hookPost(text,hook);
       return fetch(url,{method:'POST',
         headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-        body:JSON.stringify({action:'notify',text:text,money:!!money})})
+        body:JSON.stringify({action:'notify',text:text,money:!!money,to:to||''})})
         .then(function(r){ return r.json().catch(function(){ return {ok:r.ok}; }); })
         .then(function(j){ return (j&&j.ok)?true:hookPost(text,hook); })
         .catch(function(){ return hookPost(text,hook); });
@@ -5254,7 +5271,7 @@
          아직 저장도 안 된 주소라 함수는 모른다. */
       if(hookOverride) return hookPost(L.join('\n'),hookOverride);
       var money=(kind==='due'||kind==='paid'||kind==='settled');
-      return slackPost(L.join('\n'),money,hook);
+      return slackPost(L.join('\n'),money,hook,o.to);
     }catch(e){ return Promise.resolve(false); }
   }
   /* 결재선을 「김준철 → 최현영」으로. 끝난 사람은 ✓ 를 붙인다. */
