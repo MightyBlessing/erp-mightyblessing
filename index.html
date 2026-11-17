@@ -5039,11 +5039,49 @@
     var money=(kind==='due'||kind==='paid'||kind==='settled');
     return (money&&sl.hook2)?sl.hook2:(sl.hook||'');
   }
+  /* ─── 보내는 길 두 가지 ───
+     옛 길: 브라우저가 웹후크로 바로 쏜다. 그러려면 웹후크 주소가
+            config/slack 에 있어야 하고, 그 문서는 로그인한 사람이면
+            누구나 읽는다. 주소만 있으면 누구든 우리 슬랙에 글을 쓴다.
+            게다가 no-cors 라 성공했는지도 알 수 없다.
+     새 길: Edge Function 을 거친다. 주소는 서버에만 있고,
+            성공·실패가 진짜로 돌아온다.
+     함수가 아직 안 올라간 집에서도 알림은 가야 하므로, 새 길이 막히면
+     옛 길로 보낸다. */
+  function fnUrl(){
+    var c=window.MB_SUPABASE;
+    return (c&&c.url)?String(c.url).replace(/\/+$/,'')+'/functions/v1/erp-slack':'';
+  }
+  function sbToken(){
+    if(!S.sb||!S.sb.auth||!S.sb.auth.getSession) return Promise.resolve('');
+    return S.sb.auth.getSession().then(function(r){
+      return (r&&r.data&&r.data.session&&r.data.session.access_token)||'';
+    }).catch(function(){ return ''; });
+  }
+  function hookPost(text,hook){
+    if(!hook) return Promise.resolve(false);
+    return fetch(hook,{method:'POST',mode:'no-cors',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify({text:text})})
+      .then(function(){ return true; }).catch(function(){ return false; });
+  }
+  function slackPost(text,money,hook){
+    var url=fnUrl();
+    if(!url) return hookPost(text,hook);
+    return sbToken().then(function(tok){
+      if(!tok) return hookPost(text,hook);
+      return fetch(url,{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+        body:JSON.stringify({action:'notify',text:text,money:!!money})})
+        .then(function(r){ return r.json().catch(function(){ return {ok:r.ok}; }); })
+        .then(function(j){ return (j&&j.ok)?true:hookPost(text,hook); })
+        .catch(function(){ return hookPost(text,hook); });
+    });
+  }
   function slackSay(kind, o, hookOverride){
     try{
       var sl=S.slack||{};
       var hook=hookOverride||slackHook(kind);
-      if(!hook) return Promise.resolve(false);
+      if(!hook&&!fnUrl()) return Promise.resolve(false);
       if((sl.on||{})[kind]===false) return Promise.resolve(false);
 
       var f=SLACK_FACE[kind]||{e:':bell:',t:'알림'};
@@ -5061,11 +5099,11 @@
       var host=base.replace(/^https?:\/\//,'').replace(/\/.*$/,'');
       L.push(':large_purple_circle: *마이티블레싱 ERP* · <'+base+'|'+host+'>');
 
-      /* no-cors 로 던진다. 웹후크는 응답을 안 읽어도 되고,
-         브라우저에서 바로 쏘려면 이 길밖에 없다. */
-      return fetch(hook,{method:'POST',mode:'no-cors',
-        headers:{'Content-Type':'application/json'},body:JSON.stringify({text:L.join('\n')})})
-        .then(function(){ return true; }).catch(function(){ return false; });
+      /* 주소를 손으로 넣어 시험하는 중이면 그 주소로 바로 쏜다.
+         아직 저장도 안 된 주소라 함수는 모른다. */
+      if(hookOverride) return hookPost(L.join('\n'),hookOverride);
+      var money=(kind==='due'||kind==='paid'||kind==='settled');
+      return slackPost(L.join('\n'),money,hook);
     }catch(e){ return Promise.resolve(false); }
   }
   /* 결재선을 「김준철 → 최현영」으로. 끝난 사람은 ✓ 를 붙인다. */
@@ -5134,7 +5172,7 @@
           '</div></div>'+
         (canCfg
           ? '<div class="actions"><button class="btn primary sm" id="slSave"'+(S.slackBusy?' disabled':'')+'>저장</button>'+
-              '<button class="btn sm" id="slTest"'+(S.slackBusy||!sl.hook?' disabled':'')+'>'+
+              '<button class="btn sm" id="slTest"'+(S.slackBusy||(!sl.hook&&!fnUrl())?' disabled':'')+'>'+
                 (S.slackBusy?'보내는 중…':'시험 삼아 한 번 보내기')+'</button></div>'
           : '')+
       '</div>'+
@@ -5515,7 +5553,7 @@
       /* 아직 저장 안 하고 눌러보는 사람이 많다. 화면에 적힌 주소로 바로 쏜다. */
       var typed=($('#slHook')&&$('#slHook').value||'').trim();
       var cur=S.slack||{};
-      if(!typed && !cur.hook) return errbar('웹후크 주소를 먼저 넣어주세요');
+      if(!typed && !cur.hook && !fnUrl()) return errbar('웹후크 주소를 먼저 넣어주세요');
       if(typed && typed.indexOf('https://hooks.slack.com/')!==0)
         return errbar('슬랙 웹후크 주소는 https://hooks.slack.com/ 으로 시작합니다');
       S.slackBusy=true; render();
