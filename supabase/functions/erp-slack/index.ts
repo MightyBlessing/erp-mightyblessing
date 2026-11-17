@@ -165,10 +165,187 @@ async function digest() {
   return await postSlack(L.join("\n"), true);
 }
 
+/* ───────── 슬랙에서 문서 초안 ─────────
+   「/지출 교촌치킨 52000 스태프 야식」 한 줄로 지출결의서 초안이 생긴다.
+   영수증을 손에 든 그 자리에서 치라는 것이다. 자리에 돌아와 ERP 를 켤
+   즈음엔 이미 금액을 잊는다.
+
+   기안자는 비워 둔다. 슬랙 사용자가 ERP 의 누구인지 알려면 봇 토큰과
+   이메일 조회 권한이 더 필요한데, 그 권한을 더 받느니 ERP 에서 「내 것으로」
+   한 번 누르는 편이 낫다. 누가 쳤는지는 적어 둔다. */
+
+/* 슬랙이 보낸 게 맞는지 본다. 이 함수는 문지기를 꺼 둬서 주소만 알면
+   누구나 두드릴 수 있다. 서명이 유일한 자물쇠다. */
+async function slackSigned(raw: string, ts: string, sig: string) {
+  const secret = env("SLACK_SIGNING_SECRET");
+  if (!secret || !ts || !sig) return false;
+  /* 다섯 달 전에 가로챈 요청을 오늘 다시 보내는 걸 막는다. */
+  if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign(
+    "HMAC",
+    key,
+    new TextEncoder().encode(`v0:${ts}:${raw}`),
+  );
+  const mine = "v0=" +
+    [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (mine.length !== sig.length) return false;
+  /* 글자를 하나씩 비교하되 틀려도 끝까지 간다. 빨리 포기하면 그 시간차로
+     정답을 한 글자씩 알아낼 수 있다. */
+  let diff = 0;
+  for (let i = 0; i < mine.length; i++) diff |= mine.charCodeAt(i) ^ sig.charCodeAt(i);
+  return diff === 0;
+}
+
+const ephemeral = (text: string) =>
+  J({ response_type: "ephemeral", text });
+
+function docNoPrefix(y: number) {
+  if (y <= 2026) return "마블 제2024/2026";
+  const b = 2027 + Math.floor((y - 2027) / 2) * 2;
+  return `마블 제${b}/${b + 1}`;
+}
+/* ERP 의 nextNo 와 같은 규칙이어야 한다. 번호가 겹치면 종이로 나간
+   문서와 대조가 안 된다. */
+function nextExpenseNo(rows: { data: Record<string, any> }[]) {
+  const y = new Date().getFullYear();
+  const pre = "마블 지출 " + docNoPrefix(y).replace("마블 제", "");
+  const re = new RegExp(
+    "^" + pre.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "-(\\d+)호$",
+  );
+  let mx = 0;
+  for (const r of rows) {
+    if (r.data?.type !== "expense") continue;
+    const m = re.exec(String(r.data?.no || ""));
+    if (m) mx = Math.max(mx, parseInt(m[1], 10));
+  }
+  return `${pre}-${String(mx + 1).padStart(3, "0")}호`;
+}
+
+/* 「교촌치킨 52000 스태프 야식」 → 거래처 / 금액 / 내역.
+   금액은 처음 나오는 숫자 덩어리로 본다. 쉼표는 빼고 읽는다. */
+function parseExpense(text: string) {
+  const w = text.trim().split(/\s+/).filter(Boolean);
+  let i = w.findIndex((x) => /^[0-9][0-9,]*원?$/.test(x));
+  if (i < 0) return null;
+  const amt = Number(w[i].replace(/[,원]/g, ""));
+  if (!amt) return null;
+  return {
+    payee: w.slice(0, i).join(" "),
+    amt,
+    what: w.slice(i + 1).join(" "),
+  };
+}
+
+async function slashExpense(text: string, who: string) {
+  const got = parseExpense(text);
+  if (!got || !got.payee) {
+    return ephemeral(
+      "이렇게 쳐주세요 — `/지출 교촌치킨 52000 스태프 야식`\n" +
+        "`거래처 금액 내역` 순서입니다. 내역은 없어도 됩니다.",
+    );
+  }
+  const rows = await docs("docs");
+  const now = new Date().toISOString();
+  const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
+  const body = {
+    type: "expense",
+    title: "지출결의서",
+    no: nextExpenseNo(rows),
+    date: todayKST(),
+    eventId: "",
+    account: "기타",
+    method: "bank",
+    payee: got.payee,
+    payeeBank: "",
+    payeeAcct: "",
+    dueDate: "",
+    note: `슬랙에서 ${who} 님이 올린 초안입니다. 내용을 확인하고 올려주세요.`,
+    items: [{ name: got.what || got.payee, qty: 1, price: got.amt, note: "" }],
+    pay: { state: "pending", at: "", by: "", memo: "" },
+    /* 기안자와 결재선은 비워 둔다. ERP 에서 집는 사람이 1차 결재자가 된다. */
+    steps: [],
+    status: "draft",
+    drafter: "",
+    fromSlack: { user: who, at: now },
+    createdAt: now,
+    updatedAt: now,
+  };
+  const r = await fetch(`${env("SUPABASE_URL")}/rest/v1/docs`, {
+    method: "POST",
+    headers: {
+      apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+      authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      "content-type": "application/json",
+      prefer: "return=minimal",
+    },
+    body: JSON.stringify({
+      collection: "docs",
+      id,
+      data: body,
+      updated_at: now,
+    }),
+  });
+  if (!r.ok) {
+    return ephemeral(`초안을 못 만들었습니다 (${r.status}). 잠시 뒤 다시 해보세요.`);
+  }
+  return ephemeral(
+    `:memo: *지출결의서 초안* — ${got.payee} ${won(got.amt)}` +
+      (got.what ? `\n${got.what}` : "") +
+      `\n:arrow_upper_right: <${base()}#docs/${id}|ERP에서 열어 올리기>` +
+      `\n_아직 올라가지 않았습니다. 열어서 확인하고 상신해 주세요._`,
+  );
+}
+
+/* 명령 이름이 무엇으로 등록됐든 받는다. 슬랙이 한글 이름을 받아주면
+   /지출 로, 아니면 /erp 지출 … 로 쓸 수 있게. */
+function kindOf(w: string) {
+  const x = (w || "").replace(/^\//, "").trim();
+  if (/^(지출|expense|exp)$/i.test(x)) return "expense";
+  return "";
+}
+
+async function slash(raw: string) {
+  const f = new URLSearchParams(raw);
+  const who = f.get("user_name") || "누군가";
+  let text = (f.get("text") || "").trim();
+  let kind = kindOf(f.get("command") || "");
+  if (!kind) {
+    const [first, ...rest] = text.split(/\s+/);
+    kind = kindOf(first);
+    text = rest.join(" ");
+  }
+  if (kind === "expense") return await slashExpense(text, who);
+  return ephemeral(
+    "쓸 수 있는 것 — `지출`\n예) `/지출 교촌치킨 52000 스태프 야식`",
+  );
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
     const url = new URL(req.url);
+
+    /* 슬랙 슬래시 명령은 JSON 이 아니라 폼으로 온다. 그리고 서명을 보려면
+       본문을 손대기 전의 날것 그대로 읽어야 한다. */
+    const ctype = req.headers.get("content-type") || "";
+    if (ctype.includes("application/x-www-form-urlencoded")) {
+      const raw = await req.text();
+      const ok = await slackSigned(
+        raw,
+        req.headers.get("x-slack-request-timestamp") || "",
+        req.headers.get("x-slack-signature") || "",
+      );
+      if (!ok) return J({ ok: false, error: "서명이 맞지 않습니다" }, 401);
+      return await slash(raw);
+    }
+
     const body = req.method === "POST"
       ? await req.json().catch(() => ({}))
       : {};

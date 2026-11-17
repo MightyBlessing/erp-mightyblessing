@@ -1078,10 +1078,15 @@
     var i=currentStep(d);
     return i>=0 && (d.steps[i].uid===S.me.id) && ['submitted','progress'].indexOf(docStatus(d))>=0;
   }
+  /* 슬랙에서 들어온 초안은 아직 임자가 없다. 「내 문서」에서도 보여야
+     누군가 집어 간다. 아무 탭에도 안 뜨면 영영 묻힌다. */
+  function slackDraft(d){
+    return !!(d&&d.fromSlack&&!d.drafter&&docStatus(d)==='draft');
+  }
   function docList(tab){
     var all=Object.keys(S.docs).map(function(k){return S.docs[k];});
     all.sort(function(a,b){return (b.updatedAt||'')<(a.updatedAt||'')?-1:1;});
-    if(tab==='mine')return all.filter(function(d){return d.drafter===S.me.id;});
+    if(tab==='mine')return all.filter(function(d){return d.drafter===S.me.id||slackDraft(d);});
     if(tab==='todo')return all.filter(isMyTurn);
     if(tab==='progress')return all.filter(function(d){return ['submitted','progress'].indexOf(docStatus(d))>=0;});
     if(tab==='approved')return all.filter(function(d){return docStatus(d)==='approved';});
@@ -1582,7 +1587,8 @@
 
   /* ---- 지출결의서 ---- */
   function renderExpense(d){
-    var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var st=docStatus(d);
+    var editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit||slackDraft(d));
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d), total=expTotal(d), ps=payState(d);
     /* 예정을 잡았다고 지급 버튼이 사라지면 안 된다. 예정은 거쳐 가는 단계일 뿐,
@@ -1671,6 +1677,14 @@
           PAY_LABEL[ps]+(ps==='sched'?' '+esc(schedOn(d)):'')+'</span>':'')+
         '<span style="flex:1"></span>'+delCtl+'</div>'+
       (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
+      (slackDraft(d)
+        ? '<div class="note n-info" style="margin:0 0 14px">'+
+            '<b>슬랙에서 들어온 초안입니다</b> · '+esc((d.fromSlack||{}).user||'')+' 님<br>'+
+            '금액과 받는 사람을 확인하고 <b>내 것으로 가져오기</b>를 누르면 기안자가 됩니다. '+
+            '그래야 상신할 수 있습니다.'+
+            (writable()?' <button class="btn primary sm" id="xClaim" style="margin-left:8px">내 것으로 가져오기</button>':'')+
+          '</div>'
+        : '')+
       '<div class="cols"><div class="stack">'+
         '<section class="card"><h2>문서 정보'+
           (editable&&autoTitle(d)&&autoTitle(d)!==d.title
@@ -5555,6 +5569,15 @@
                              .map(function(x){return x[1];}).join(' · ')||'없음']],
         link:appLink('dash',''), cta:'ERP 열기'}, typed)
         .then(done).catch(done);
+    }
+    if(t.id==='xClaim'){
+      var dc=S.docSel&&S.docs[S.docSel];
+      if(!dc||!S.db) return;
+      /* 기안자가 되면서 1차 결재자도 된다. 직접 올린 문서와 똑같아진다. */
+      return S.db.doc('docs/'+S.docSel).update({
+        drafter:S.me.id||'', steps:firstStep(), updatedAt:nowISO()
+      }).then(function(){ flash('내 문서가 되었습니다'); render(); })
+       .catch(function(e){ errbar('가져오기 실패 '+(e&&e.code||'')); });
     }
     if(t.id==='pLink')   return linkAll();
     if(t.id==='pFixOrphan') return fixOrphans();
