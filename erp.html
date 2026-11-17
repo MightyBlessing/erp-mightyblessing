@@ -1241,7 +1241,43 @@
     },0);
   }
 
+  /* 다시 그리면 치고 있던 칸이 통째로 새로 만들어진다. 커서도, 방금 친
+     글자도 같이 사라진다. 저장은 0.7초 뒤에 조용히 일어나므로 「잠깐
+     멈췄다가 다시 치는」 바로 그 순간이 정확히 거기에 걸린다.
+     스페이스가 먹히는 것처럼 보이던 게 이것이다.
+
+     그려 놓고 같은 칸을 다시 찾아 커서를 제자리에 돌려놓는다. */
+  function fieldKey(n){
+    try{
+      if(n.id) return '#'+(window.CSS&&CSS.escape?CSS.escape(n.id):n.id);
+      var d=n.dataset||{};
+      if(d.apk) return '[data-apk="'+d.apk+'"]';
+      if(d.ei!=null&&d.ef) return '[data-ei="'+d.ei+'"][data-ef="'+d.ef+'"]';
+    }catch(e){}
+    return '';
+  }
   function render(){
+    var act=document.activeElement, keep=null;
+    if(act&&(act.tagName==='INPUT'||act.tagName==='TEXTAREA')&&act.type!=='file'){
+      var k=fieldKey(act);
+      if(k){
+        keep={k:k, v:act.value, s:null, e:null};
+        /* number·date 칸은 커서 위치를 물어보면 화를 낸다. 모르면 비워 둔다. */
+        try{ keep.s=act.selectionStart; keep.e=act.selectionEnd; }catch(e2){}
+      }
+    }
+    paint();
+    if(!keep) return;
+    try{
+      var n=document.querySelector(keep.k);
+      if(!n) return;
+      /* 그리는 사이에 친 글자가 상태보다 앞서 있을 수 있다. 화면 쪽을 믿는다. */
+      if(n.value!==keep.v) n.value=keep.v;
+      n.focus({preventScroll:true});
+      if(keep.s!=null&&n.setSelectionRange) n.setSelectionRange(keep.s,keep.e);
+    }catch(e3){}
+  }
+  function paint(){
     app=$('#app')||app; if(!app)return;
     renderNav();
     if(S.fatal){app.innerHTML='<div class="card"><div class="empty"><strong>열 수 없습니다</strong>'+esc(S.fatal)+'</div></div>';return;}
