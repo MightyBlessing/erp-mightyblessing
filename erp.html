@@ -419,6 +419,8 @@
       'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>';
   }
   var ICON={
+    conf:  ic('<circle cx="12" cy="12" r="3.2"/><path d="M12 2.6v2.2M12 19.2v2.2M21.4 12h-2.2M4.8 12H2.6'+
+              'M18.6 5.4l-1.6 1.6M7 17l-1.6 1.6M18.6 18.6L17 17M7 7L5.4 5.4"/>'),
     dash:  ic('<rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/>'),
     docs:  ic('<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>'),
     acct:  ic('<rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/><path d="M6.5 14.5h4"/>'),
@@ -428,7 +430,11 @@
     report:ic('<path d="M3 20.5h18"/><rect x="4.5" y="11" width="3.6" height="6.5" rx="1"/><rect x="10.2" y="6.5" width="3.6" height="11" rx="1"/><rect x="15.9" y="9" width="3.6" height="8.5" rx="1"/>'),
     roles: ic('<circle cx="9" cy="8" r="3.2"/><path d="M3.4 19.2a5.8 5.8 0 0 1 11.2 0"/><path d="M16.5 6.4a3 3 0 0 1 0 5.9"/><path d="M18 19.2a5.3 5.3 0 0 0-1.7-3.9"/>')
   };
-  var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계'},{k:'settle',t:'정산'},{k:'report',t:'보고서'},{k:'roles',t:'역할'}];
+  /* 슬랙이 하는 일(소통·진행·일정·파일)은 여기 안 만든다.
+     ERP 는 공식 기록만 쥔다 — 결재, 돈, 정산, 권한. */
+  var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계·재무'},
+           {k:'settle',t:'정산'},{k:'report',t:'보고서'},
+           {k:'roles',t:'사용자·권한'},{k:'conf',t:'시스템 설정'}];
   var DOC_KIND={official:'공문',expense:'지출결의서'};
   var SCOPE={out:'대외용',in:'대내용'};
   /* 로고는 저장소에 같이 둔다. 공용 자산이라 사람마다 올릴 이유가 없다.
@@ -466,7 +472,16 @@
   var FORM_LABEL={rent:'장소 대관 요청',propose:'행사 제안',notice:'행사 협조 요청',
                   meeting:'회의 결과 보고',blank:'기타 (직접 작성)'};
   /* 계정과목 — 장부 분류. 세무·결산에서 이 단위로 묶인다. */
-  var ACCOUNTS=['사례비','인건비','임차료','장비·대여','재료비','인쇄·홍보','교통비','식비','수수료','기타'];
+  /* 기본값. 시스템 설정에서 고치면 config/lists 가 우선한다.
+     회사마다 계정과목이 다르고, 쓰다 보면 늘어난다. 코드를 고치게 둘 일이 아니다. */
+  var ACCOUNTS_DEF=['사례비','인건비','임차료','장비·대여','재료비','인쇄·홍보','교통비','식비','수수료','기타'];
+  var BIZ_DEF=['가. 운영비','나. 컨테이너','다. 예배운영','라. 사업비'];
+  var PAYWAY_DEF=['계좌이체','세훈카드','준철카드','준철카드(신용)','현금영수증','세금계산서','현금'];
+  function cfgList(k,def){
+    var v=(S.lists||{})[k];
+    return (v&&v.length)?v:def;
+  }
+  function ACC(){ return cfgList('accounts',ACCOUNTS_DEF); }
   var METHODS={bank:'계좌이체',card:'법인카드',cash:'현금'};
   var PAY_LABEL={pending:'지급대기',paid:'지급완료'};
   var OV_KEYS=['행사명','행사목적','일시','주관','주최/협력','세부장소','참석인원','기타(요청)사항'];
@@ -484,7 +499,8 @@
     ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
-    payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false};
+    payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
+    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -1079,6 +1095,7 @@
     if(S.view==='acct')return renderAcct();
     if(S.view==='report')return renderReport();
     if(S.view==='roles')return renderRoles();
+    if(S.view==='conf')return renderConfig();
     return S.sel&&S.events[S.sel]?renderEvent(S.events[S.sel]):renderSettleList();
   }
   function renderNav(){
@@ -1100,7 +1117,8 @@
       if(lg.innerHTML!==want) lg.innerHTML=want;
     }
     var t=$('#ptitle');
-    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계',settle:'정산',report:'손익 보고서',roles:'역할'}[S.view]||'업무관리시스템';
+    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계·재무',settle:'정산',
+      report:'손익 보고서',roles:'사용자·권한',conf:'시스템 설정'}[S.view]||'업무관리시스템';
     renderBell();
     renderWho();
     renderPeopleList();
@@ -1372,7 +1390,7 @@
           '<div class="field"><label for="xEvent">행사 / 사업</label><select id="xEvent"'+dis+'>'+evOpts+'</select></div>'+
           '<div class="row2">'+
             '<div class="field"><label for="xAccount">계정과목</label><select id="xAccount"'+dis+'>'+
-              ACCOUNTS.map(function(a){return '<option'+(d.account===a?' selected':'')+'>'+esc(a)+'</option>';}).join('')+'</select></div>'+
+              ACC().map(function(a){return '<option'+(d.account===a?' selected':'')+'>'+esc(a)+'</option>';}).join('')+'</select></div>'+
             '<div class="field"><label for="xMethod">지급 수단</label><select id="xMethod"'+dis+'>'+
               Object.keys(METHODS).map(function(k){return '<option value="'+k+'"'+(d.method===k?' selected':'')+'>'+METHODS[k]+'</option>';}).join('')+'</select></div>'+
           '</div>'+
@@ -2584,7 +2602,7 @@
           '<input id="adItem" value="'+esc(cur.item||'')+'" placeholder="예: 스태프 야식 · 주차비 · 케이블 구입"></div>'+
         '<div class="row2">'+
           '<div class="field"><label for="adBiz">사업</label><select id="adBiz">'+
-            BIZ.map(function(b){
+            BIZL().map(function(b){
               return '<option value="'+esc(b)+'"'+(bizNow===b?' selected':'')+'>'+esc(b)+'</option>';
             }).join('')+'</select></div>'+
           (bizNow==='다. 예배운영'
@@ -2798,7 +2816,7 @@
             ? '<div class="field"><label for="ldTo">받은 통장</label>'+
                 '<select id="ldTo">'+bopt(cur.to)+'</select></div>'
             : '<div class="field"><label for="ldBiz">사업</label>'+
-                '<select id="ldBiz"><option value=""></option>'+BIZ.map(function(b){
+                '<select id="ldBiz"><option value=""></option>'+BIZL().map(function(b){
                   return opt(b,cur.biz); }).join('')+'</select></div>')+
         '</div>'+
         (dirNow!=='move'&&cur.biz==='다. 예배운영'
@@ -2824,7 +2842,7 @@
         (dirNow==='move'?'':
           '<div class="row2">'+
             '<div class="field"><label for="ldWay">결제수단</label>'+
-              '<select id="ldWay"><option value=""></option>'+PAYWAY.map(function(w){
+              '<select id="ldWay"><option value=""></option>'+PAYWAYL().map(function(w){
                 return opt(w,cur.way); }).join('')+'</select></div>'+
             '<div class="field"><label for="ldPayer">대신 낸 사람</label>'+
               '<input id="ldPayer" list="plist" value="'+esc(cur.payer||'')+'" placeholder="없으면 비워두세요"></div>'+
@@ -2896,7 +2914,7 @@
         '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:0 0 12px">'+
           sel('ldfMonth','월',S.ledMonth,months.map(function(m){return [m,m];}))+
           sel('ldfBank','통장',S.ledBank,banks.map(function(b){return [b.id,b.name];}))+
-          sel('ldfBiz','사업',S.ledBiz,BIZ.map(function(b){return [b,b];}))+
+          sel('ldfBiz','사업',S.ledBiz,BIZL().map(function(b){return [b,b];}))+
         '</div>'+
         (L.length
           ? '<div class="scroll"><table><thead><tr>'+
@@ -3859,11 +3877,11 @@
      주민등록번호는 넣지 않는다. 준철님이 따로 관리하신다. */
   /* 사업 구분. 「2026 마이티블레싱 회계」 시트의 사업명을 그대로 쓴다.
      여기를 바꾸면 지난 장부와 대조가 안 되므로 함부로 고치지 않는다. */
-  var BIZ=['가. 운영비','나. 컨테이너','다. 예배운영','라. 사업비'];
+  function BIZL(){ return cfgList('biz',BIZ_DEF); }
   /* 결제수단. 시트 「분류」 탭에 적힌 경우의 수. */
   /* 대신결제는 회사 돈이 아니라 개인 돈이 먼저 나간 것이다. */
   var ADVWAY=['개인카드','현금','개인계좌'];
-  var PAYWAY=['계좌이체','세훈카드','준철카드','준철카드(신용)','현금영수증','세금계산서','현금'];
+  function PAYWAYL(){ return cfgList('payway',PAYWAY_DEF); }
 
   var INC_RATE=0.03, LOC_RATE=0.003;
   var TAX_DEFAULT='행사도우미';
@@ -4207,6 +4225,144 @@
   }
 
   /* ---- 역할 ---- */
+  /* ─── 시스템 설정 ───
+     바뀌는 값은 코드가 아니라 여기 있어야 한다. 계정과목 하나 늘릴 때마다
+     개발자를 찾게 두면, 결국 「기타」로 몰아넣고 장부가 무뎌진다. */
+  var LISTS=[
+    {k:'accounts', t:'계정과목', d:ACCOUNTS_DEF, h:'지출결의서에서 고르는 항목입니다.'},
+    {k:'biz',      t:'사업 구분', d:BIZ_DEF,     h:'장부와 행사별 수지를 가르는 기준입니다. 회계 시트의 사업명과 같게 두세요.'},
+    {k:'payway',   t:'지급 수단', d:PAYWAY_DEF,  h:'장부에 적는 결제 방법입니다.'}
+  ];
+  var SLACK_EV=[
+    ['ask','결재 요청'],['ok','결재 승인'],['no','결재 반려'],
+    ['due','지급 예정일'],['paid','지급 완료'],['settled','정산 완료']
+  ];
+  function saveCfg(id,body){
+    if(!S.db) return Promise.resolve();
+    if(!S.me.canEdit) return Promise.reject({code:'관리자만 고칠 수 있습니다'});
+    body.updatedAt=nowISO(); body.by=S.me.id||'';
+    return S.db.doc('config/'+id).set(body);
+  }
+  function saveList(k,arr){
+    var next=clone(S.lists||{}); next[k]=arr;
+    return saveCfg('lists',next).then(function(){
+      S.confEdit=null; S.confDraft=''; flash('저장했습니다'); render();
+    }).catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
+  }
+
+  /* ─── 슬랙으로 알리기 ───
+     슬랙은 알림과 협업만 맡는다. 공식 기록은 여기 남는다.
+     그래서 보내는 건 「무슨 일이 있었고 어디로 가면 되는지」 한 줄이면 된다.
+
+     보내다 실패해도 하던 일을 막지 않는다. 결재가 슬랙 때문에 멈추면 안 된다. */
+  function appLink(view,id){
+    var base=location.origin+location.pathname;
+    return base+'#'+view+(id?('/'+id):'');
+  }
+  function slackSay(kind, text, link){
+    try{
+      var sl=S.slack||{};
+      if(!sl.hook) return Promise.resolve(false);
+      if((sl.on||{})[kind]===false) return Promise.resolve(false);
+      var body={text:text+(link?('\n<'+link+'|ERP에서 열기>'):'')};
+      /* no-cors 로 던진다. 웹후크는 응답을 안 읽어도 되고,
+         브라우저에서 바로 쏘려면 이 길밖에 없다. */
+      return fetch(sl.hook,{method:'POST',mode:'no-cors',
+        headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+        .then(function(){ return true; }).catch(function(){ return false; });
+    }catch(e){ return Promise.resolve(false); }
+  }
+
+  function renderConfig(){
+    var canCfg=S.me.canEdit;
+    var sl=S.slack||{};
+
+    var listCards=LISTS.map(function(L){
+      var cur=cfgList(L.k,L.d), ed=S.confEdit===L.k;
+      return '<div class="card" style="margin-top:14px"><h2>'+esc(L.t)+
+        (canCfg&&!ed?' <button class="btn sm" data-cfed="'+L.k+'" style="float:right">고치기</button>':'')+'</h2>'+
+        '<p class="hint" style="margin:0 0 12px">'+esc(L.h)+'</p>'+
+        (ed
+          ? '<div class="field"><label for="cfBox">한 줄에 하나씩</label>'+
+              '<textarea id="cfBox" rows="'+Math.max(5,cur.length+1)+'">'+esc(cur.join('\n'))+'</textarea></div>'+
+            '<div class="actions"><button class="btn primary sm" data-cfsave="'+L.k+'">저장</button>'+
+              '<button class="btn sm" id="cfCancel">취소</button>'+
+              '<span style="flex:1"></span>'+
+              '<button class="btn sm" data-cfreset="'+L.k+'">기본값으로</button></div>'+
+            '<p class="hint" style="margin-top:10px">이미 쓰인 이름을 바꾸면 <b>예전 기록은 옛 이름 그대로 남습니다.</b> '+
+              '장부가 둘로 갈리니, 바꾸기보다 더하는 쪽을 권합니다.</p>'
+          : '<div style="display:flex;flex-wrap:wrap;gap:6px">'+
+              cur.map(function(x){ return '<span class="pill p-approved">'+esc(x)+'</span>'; }).join('')+
+            '</div>')+
+      '</div>';
+    }).join('');
+
+    app.innerHTML=
+      '<div class="stack">'+
+      (canCfg?'':'<div class="note n-info">보기만 됩니다. 고치는 건 관리자만 할 수 있습니다.</div>')+
+
+      '<div class="card"><h2>슬랙 알림</h2>'+
+        '<p class="hint" style="margin:0 0 12px">'+
+          '소통과 진행은 슬랙에서 하고, <b>공식 기록만 여기 남깁니다.</b> '+
+          'ERP에서 일이 생기면 슬랙으로 알리고, 알림에는 그 문서로 바로 가는 링크가 붙습니다.</p>'+
+        '<div class="field"><label for="slHook">들어오는 웹후크 주소</label>'+
+          '<input id="slHook" type="url" value="'+esc(sl.hook||'')+'" placeholder="https://hooks.slack.com/services/..."'+
+          (canCfg?'':' disabled')+'></div>'+
+        '<p class="hint" style="margin:-4px 0 14px">슬랙 → 앱 → Incoming Webhooks 에서 채널을 고르고 받은 주소입니다. '+
+          '<b>이 주소를 아는 사람은 그 채널에 글을 쓸 수 있으니</b> 공개된 곳에 두지 마세요.</p>'+
+        '<div class="field"><label>무엇을 알릴까요</label>'+
+          '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px">'+
+            SLACK_EV.map(function(x){
+              var on=(sl.on||{})[x[0]]!==false;
+              return '<label style="display:flex;align-items:center;gap:6px;font-size:13.5px">'+
+                '<input type="checkbox" data-slev="'+x[0]+'"'+(on?' checked':'')+(canCfg?'':' disabled')+'>'+
+                esc(x[1])+'</label>';
+            }).join('')+
+          '</div></div>'+
+        (canCfg
+          ? '<div class="actions"><button class="btn primary sm" id="slSave"'+(S.slackBusy?' disabled':'')+'>저장</button>'+
+              '<button class="btn sm" id="slTest"'+(S.slackBusy||!sl.hook?' disabled':'')+'>'+
+                (S.slackBusy?'보내는 중…':'시험 삼아 한 번 보내기')+'</button></div>'
+          : '')+
+      '</div>'+
+
+      listCards+
+
+      '<div class="card" style="margin-top:14px"><h2>로고</h2>'+
+        '<p class="hint" style="margin:0 0 12px">왼쪽 메뉴와 공문 머리에 들어갑니다. 흰 배경은 자동으로 빼냅니다.</p>'+
+        '<div class="sealbox">'+
+          (S.logo?'<img class="wide" src="'+esc(S.logo)+'" alt="등록된 로고">':'<div class="empty" style="padding:18px 20px;margin:0">등록된 로고가 없습니다</div>')+
+          (canCfg?'<div><input type="file" id="logoFile" accept="image/png,image/jpeg"></div>'+
+                  (S.logo?'<button class="btn danger sm" id="logoDel">로고 지우기</button>':''):'')+
+        '</div></div>'+
+
+      '<div class="card" style="margin-top:14px"><h2>직인</h2>'+
+        '<p class="hint" style="margin:0 0 12px">최종 승인된 공문을 PDF로 내보낼 때 발신명의 옆에 찍힙니다. '+
+          '배경이 투명한 PNG를 권장합니다. 가로세로 220px로 줄여서 보관합니다.</p>'+
+        '<div class="sealbox">'+
+          (S.seal?'<img src="'+esc(S.seal)+'" alt="등록된 직인">':'<div class="empty" style="padding:18px 20px;margin:0">등록된 직인이 없습니다</div>')+
+          (canCfg?'<div><input type="file" id="sealFile" accept="image/png,image/jpeg"></div>'+
+                  (S.seal?'<button class="btn danger sm" id="sealDel">직인 지우기</button>':''):'')+
+        '</div></div>'+
+
+      '<div class="card" style="margin-top:14px"><h2>이 시스템이 맡는 일</h2>'+
+        '<p class="hint" style="margin:0 0 10px">슬랙과 겹치지 않게 나눠 둔 범위입니다.</p>'+
+        '<div class="row2">'+
+          '<div><b style="font-size:13.5px">여기(ERP)</b>'+
+            '<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.9;color:var(--muted)">'+
+            ['전자결재와 공식 승인','회계·재무, 수입과 지출','예산과 자금','행사·사업별 정산',
+             '사례비 지급, 미수금·미지급금','증빙과 결재 문서 보관','사용자와 권한','회계·결재 변경 이력']
+              .map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'+
+          '<div><b style="font-size:13.5px">슬랙</b>'+
+            '<ul style="margin:8px 0 0;padding-left:18px;font-size:13px;line-height:1.9;color:var(--muted)">'+
+            ['채널별 소통','담당자 지정과 분배','진행 상황과 진행률','일정·마감일·리마인더',
+             '일반 파일 공유','회의와 회의록','주간·월간 업무 보고','프로젝트별 협업']
+              .map(function(x){return '<li>'+x+'</li>';}).join('')+'</ul></div>'+
+        '</div>'+
+      '</div>'+
+      '</div>';
+  }
+
   function renderRoles(){
     var canCfg=S.me.canEdit;
     loadAllowed();
@@ -4221,25 +4377,7 @@
           (S.avatars[S.me.id]?'<button class="btn danger sm" id="avaDel">사진 지우기</button>':'')+
         '</div>'+
       '</div>'+
-      '<div class="card" style="margin-top:14px"><h2>로고</h2>'+
-        '<p class="hint" style="margin:0 0 12px">왼쪽 메뉴와 공문 머리에 들어갑니다. 흰 배경은 자동으로 빼냅니다.</p>'+
-        '<div class="sealbox">'+
-          (S.logo?'<img class="wide" src="'+esc(S.logo)+'" alt="등록된 로고">':'<div class="empty" style="padding:18px 20px;margin:0">등록된 로고가 없습니다</div>')+
-          (canCfg?'<div><input type="file" id="logoFile" accept="image/png,image/jpeg"></div>'+
-                  (S.logo?'<button class="btn danger sm" id="logoDel">로고 지우기</button>':''):'')+
-        '</div>'+
-        (canCfg?'':'<p class="hint" style="margin:10px 0 0">관리자만 등록할 수 있습니다.</p>')+
-      '</div>'+
-      '<div class="card" style="margin-top:14px"><h2>직인</h2>'+
-        '<p class="hint" style="margin:0 0 12px">최종 승인된 공문을 PDF로 내보낼 때 발신명의 옆에 찍힙니다. '+
-          '배경이 투명한 PNG를 권장합니다. 가로세로 220px로 줄여서 보관합니다.</p>'+
-        '<div class="sealbox">'+
-          (S.seal?'<img src="'+esc(S.seal)+'" alt="등록된 직인">':'<div class="empty" style="padding:18px 20px;margin:0">등록된 직인이 없습니다</div>')+
-          (canCfg?'<div><input type="file" id="sealFile" accept="image/png,image/jpeg"></div>'+
-                  (S.seal?'<button class="btn danger sm" id="sealDel">직인 지우기</button>':''):'')+
-        '</div>'+
-        (canCfg?'':'<p class="hint" style="margin:10px 0 0">관리자만 등록할 수 있습니다.</p>')+
-      '</div>';
+      '';
     if(focus){
       var row=$('[data-urow="'+focus+'"]');
       if(row&&row.scrollIntoView) row.scrollIntoView({block:'center'});
@@ -4510,6 +4648,45 @@
     }
     if(t.id==='pRegAll') return registerAll();
     if(t.id==='pMemAll') return registerMembers();
+    /* ── 시스템 설정 ── */
+    if((el=t.closest('[data-cfed]'))){ S.confEdit=el.dataset.cfed; render(); return; }
+    if(t.id==='cfCancel'){ S.confEdit=null; render(); return; }
+    if((el=t.closest('[data-cfsave]'))){
+      var box=$('#cfBox'); if(!box) return;
+      var arr=box.value.split('\n').map(function(x){return x.trim();})
+                 .filter(function(x,i,a){ return x && a.indexOf(x)===i; });
+      if(!arr.length) return errbar('적어도 하나는 있어야 합니다');
+      return saveList(el.dataset.cfsave, arr);
+    }
+    if((el=t.closest('[data-cfreset]'))){
+      var kk=el.dataset.cfreset;
+      var def=LISTS.filter(function(L){return L.k===kk;})[0];
+      if(def) return saveList(kk, def.d.slice());
+      return;
+    }
+    if(t.id==='slSave'){
+      var hook=($('#slHook')&&$('#slHook').value||'').trim();
+      if(hook && hook.indexOf('https://hooks.slack.com/')!==0)
+        return errbar('슬랙 웹후크 주소는 https://hooks.slack.com/ 으로 시작합니다');
+      var on={};
+      SLACK_EV.forEach(function(x){
+        var c=document.querySelector('[data-slev="'+x[0]+'"]');
+        on[x[0]] = c ? !!c.checked : true;
+      });
+      S.slackBusy=true; render();
+      return saveCfg('slack',{hook:hook,on:on}).then(function(){
+        S.slackBusy=false; flash('저장했습니다'); render();
+      }).catch(function(e){ S.slackBusy=false; errbar('저장 실패 '+(e&&(e.code||e.message)||'')); render(); });
+    }
+    if(t.id==='slTest'){
+      S.slackBusy=true; render();
+      return slackSay('ask','마이티블레싱 ERP 연결 시험입니다. 이 글이 보이면 연결된 것입니다.',
+                      appLink('dash','')).then(function(){
+        S.slackBusy=false;
+        flash('보냈습니다. 슬랙 채널을 확인해 주세요');
+        render();
+      });
+    }
     if(t.id==='pLink')   return linkAll();
     if(t.id==='pFixOrphan') return fixOrphans();
     if(t.id==='pfSave'){
@@ -5597,6 +5774,12 @@
         S.seal=(d.exists&&d.data().dataUrl)||null; render();
       },function(){});
 
+      S.db.doc('config/lists').onSnapshot(function(d){
+        S.lists=(d.exists&&d.data())||{}; render();
+      },function(){});
+      S.db.doc('config/slack').onSnapshot(function(d){
+        S.slack=(d.exists&&d.data())||{}; render();
+      },function(){});
       S.db.doc('config/roles').onSnapshot(function(d){
         var m=(d.exists&&d.data().map)?d.data().map:{};
         S.roles={}; Object.keys(m).forEach(function(k){S.roles[k]=m[k];});
