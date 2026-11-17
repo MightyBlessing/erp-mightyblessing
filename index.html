@@ -553,7 +553,7 @@
   }
   function ACC(){ return cfgList('accounts',ACCOUNTS_DEF); }
   var METHODS={bank:'계좌이체',card:'법인카드',cash:'현금'};
-  var PAY_LABEL={pending:'지급대기',paid:'지급완료'};
+  var PAY_LABEL={pending:'지급대기',sched:'지급예정',paid:'지급완료'};
   var OV_KEYS=['행사명','행사목적','일시','주관','주최/협력','세부장소','참석인원','기타(요청)사항'];
   var OV_LETTER=['가','나','다','라','마','바','사','자'];
 
@@ -570,7 +570,7 @@
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
-    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false};
+    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:''};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -904,6 +904,21 @@
   /* 결재가 움직일 때마다 관련된 사람에게만 보낸다. */
   function notifyDoc(d,kind){
     var me=S.me.name||'누군가', ttl='「'+docLabel(d)+'」';
+    /* 앱 안 알림과 같은 자리에서 슬랙에도 한 줄 보낸다.
+       사람들이 하루 종일 보는 건 슬랙이다. 여기만 띄워 두면 안 본다. */
+    try{
+      var amt=(d.type==='expense')?(' · '+won(expTotal(d))):'';
+      var who=nameOf(d.drafter);
+      if(kind==='submit')
+        slackSay('ask', '*결재 요청* '+ttl+amt+'\n기안 '+who, appLink('docs',d.id));
+      else if(kind==='approve'){
+        var left=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';});
+        if(!left.length)
+          slackSay('ok', '*최종 승인* '+ttl+amt+'\n기안 '+who+' · 승인 '+me, appLink('docs',d.id));
+      }
+      else if(kind==='reject')
+        slackSay('no', '*반려* '+ttl+amt+'\n'+me+' 님이 반려했습니다', appLink('docs',d.id));
+    }catch(e){}
     var pend=(d.steps||[]).filter(function(x){return x.state!=='approved'&&x.state!=='rejected';})
                           .map(function(x){return x.uid;});
     var next=pend[0];
@@ -1068,8 +1083,21 @@
   function expTotal(d){
     return (d.items||[]).reduce(function(a,it){return a+num(it.qty,0)*num(it.price,0);},0);
   }
+  /* 승인 → 지급 예정 → 지급 완료.
+     「언제 주기로 했나」와 「언제 실제로 나갔나」는 다른 날짜다. 둘을 하나로
+     합쳐 두면 예정일이 밀렸는지 알 수가 없고, 받을 사람도 물어볼 데가 없다.
+     예정을 안 잡고 바로 지급해도 된다 — 급한 건까지 두 번 누르게 할 일은 아니다. */
   function payState(d){
-    var p=d.pay||{}; return p.state==='paid'?'paid':'pending';
+    var p=d.pay||{};
+    if(p.state==='paid') return 'paid';
+    if(p.schedOn) return 'sched';
+    return 'pending';
+  }
+  function schedOn(d){ return String((d.pay||{}).schedOn||'').slice(0,10); }
+  /* 예정일이 지났는데 아직 안 나갔으면 늦은 것이다. */
+  function payLate(d){
+    var so=schedOn(d);
+    return !!(so && payState(d)==='sched' && so < today());
   }
   /* 돈이 실제로 움직인 날. 원천세·지급명세서는 이 날짜로 끊는다.
      at(처리한 시각)은 '언제 버튼을 눌렀나'일 뿐이라 월말·월초에 어긋난다.
@@ -1291,7 +1319,7 @@
         tile('정산 진행 중', inflight.length+'건', '결재 대기')+
         (function(){
           var xs=Object.keys(S.docs).map(function(k){return S.docs[k];})
-            .filter(function(d){return d&&d.type==='expense'&&docStatus(d)==='approved'&&payState(d)==='pending';});
+            .filter(function(d){return d&&d.type==='expense'&&docStatus(d)==='approved'&&payState(d)!=='paid';});
           var v=xs.reduce(function(a,d){return a+expTotal(d);},0);
           return tile('지급 대기 지출', won(v), xs.length+'건 · 승인 후 미지급', xs.length>0);
         })()+
@@ -1399,7 +1427,9 @@
     var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d), total=expTotal(d), ps=payState(d);
-    var canPay=writable()&&st==='approved'&&ps==='pending'&&(myRole()==='accounting'||S.me.canEdit);
+    /* 예정을 잡았다고 지급 버튼이 사라지면 안 된다. 예정은 거쳐 가는 단계일 뿐,
+       아직 안 나간 돈이라는 점은 같다. */
+    var canPay=writable()&&st==='approved'&&ps!=='paid'&&(myRole()==='accounting'||S.me.canEdit);
 
     var rows=(d.items||[]).map(function(it,i){
       return '<tr>'+
@@ -1437,7 +1467,21 @@
       payBlock='<div class="note n-ok" style="margin:0"><b>지급 완료</b> · 이체일 '+esc(paidOn(d)||'—')+' · 처리 '+esc(nameOf((d.pay||{}).by))+
         ((d.pay||{}).memo?'<br>'+esc(d.pay.memo):'')+'</div>';
     }else if(canPay){
-      payBlock='<div class="note n-warn" style="margin:0 0 12px">승인되었습니다. <b>실제로 송금한 뒤에</b> 아래를 눌러주세요. 한 번 기록하면 되돌릴 수 없습니다.</div>'+
+      var so=schedOn(d);
+      payBlock=(so
+        ? '<div class="note '+(payLate(d)?'n-bad':'n-info')+'" style="margin:0 0 12px">'+
+            '<b>지급 예정일 '+esc(so)+'</b>'+
+            (payLate(d)?' — 예정일이 지났습니다. 송금했으면 아래에 기록해 주세요.':'')+
+            ' <button class="btn sm" id="schedClear" style="margin-left:8px">예정 지우기</button></div>'
+        : '<div class="row2" style="margin-bottom:12px">'+
+            '<div class="field"><label for="schedOn">지급 예정일</label>'+
+              '<input id="schedOn" type="date" value="'+esc(S.schedOn||d.dueDate||today())+'"></div>'+
+            '<div class="field"><label>&nbsp;</label>'+
+              '<div class="actions" style="margin:0"><button class="btn sm" id="schedGo">예정 잡기</button></div></div>'+
+          '</div>'+
+          '<p class="hint" style="margin:-6px 0 12px">언제 주기로 했는지 먼저 잡아두면 대시보드와 슬랙에서 챙길 수 있습니다. '+
+            '바로 송금하셨으면 건너뛰고 아래에 적으세요.</p>')+
+        '<div class="note n-warn" style="margin:0 0 12px">승인되었습니다. <b>실제로 송금한 뒤에</b> 아래를 눌러주세요. 한 번 기록하면 되돌릴 수 없습니다.</div>'+
         '<div class="row2">'+
           '<div class="field"><label for="payOn">이체일</label>'+
             '<input id="payOn" type="date" value="'+esc(S.payOn||today())+'"></div>'+
@@ -1465,7 +1509,8 @@
     app.innerHTML=
       '<div class="actions" style="margin-bottom:14px"><button class="btn sm" id="dback">← 문서함</button>'+
         '<span class="pill p-'+st+'" style="align-self:center">'+DOC_STATUS[st]+'</span>'+
-        (st==='approved'?'<span class="pill p-'+(ps==='paid'?'approved':'pending')+'" style="align-self:center">'+PAY_LABEL[ps]+'</span>':'')+
+        (st==='approved'?'<span class="pill p-'+(ps==='paid'?'approved':(payLate(d)?'rejected':'pending'))+'" style="align-self:center">'+
+          PAY_LABEL[ps]+(ps==='sched'?' '+esc(schedOn(d)):'')+'</span>':'')+
         '<span style="flex:1"></span>'+delCtl+'</div>'+
       (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
       '<div class="cols"><div class="stack">'+
@@ -3732,11 +3777,11 @@
   }
   function acctList(tab){
     var all=expenses().filter(function(d){return docStatus(d)==='approved';});
-    if(tab==='pending') all=all.filter(function(d){return payState(d)==='pending';});
+    if(tab==='pending') all=all.filter(function(d){return payState(d)!=='paid';});
     if(tab==='paid')    all=all.filter(function(d){return payState(d)==='paid';});
     all.sort(function(a,b){
-      var ka=(payState(a)==='paid'?paidOn(a):(a.dueDate||a.date||''));
-      var kb=(payState(b)==='paid'?paidOn(b):(b.dueDate||b.date||''));
+      var ka=(payState(a)==='paid'?paidOn(a):(schedOn(a)||a.dueDate||a.date||''));
+      var kb=(payState(b)==='paid'?paidOn(b):(schedOn(b)||b.dueDate||b.date||''));
       return kb<ka?-1:1;
     });
     return all;
@@ -3764,7 +3809,7 @@
     if(S.acctMain==='adv')   return renderAdv();
     if(S.acctMain==='banks') return renderBanks();
     var approved=expenses().filter(function(d){return docStatus(d)==='approved';});
-    var pending=approved.filter(function(d){return payState(d)==='pending';});
+    var pending=approved.filter(function(d){return payState(d)!=='paid';});
     var paid=approved.filter(function(d){return payState(d)==='paid';});
     var inflight=expenses().filter(function(d){return ['submitted','progress'].indexOf(docStatus(d))>=0;});
     var sum=function(a){return a.reduce(function(x,d){return x+expTotal(d);},0);};
@@ -3837,7 +3882,8 @@
                 '<td>'+(evFiles(d).length
                   ? '<span class="pill p-approved">'+evFiles(d).length+'</span>'
                   : '<span class="pill p-rejected">없음</span>')+'</td>'+
-                '<td><span class="pill p-'+(ps==='paid'?'approved':'pending')+'">'+PAY_LABEL[ps]+'</span></td>'+
+                '<td><span class="pill p-'+(ps==='paid'?'approved':(payLate(d)?'rejected':'pending'))+'">'+PAY_LABEL[ps]+'</span>'+
+                  (ps==='sched'?'<div style="font-size:11.5px;color:var(--muted)">'+esc(schedOn(d))+(payLate(d)?' 지남':'')+'</div>':'')+'</td>'+
                 '<td class="num" style="color:var(--muted)">'+esc(ps==='paid'?paidOn(d):(d.dueDate||d.date||''))+'</td></tr>';
             }).join('')+'</tbody></table></div>'
           : '<div class="empty"><strong>해당하는 지출이 없습니다</strong>전자결재에서 지출결의서를 올리면 여기에 모입니다.</div>')+
@@ -3852,12 +3898,20 @@
     var on=String(S.payOn||'').slice(0,10);
     if(!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('이체일을 넣어주세요');
     var body=clone(d); delete body.id;
+    /* 잡아뒀던 예정일은 지운다고 없애지 않는다. 「언제 주기로 했고 언제 줬나」를
+       나중에 비교하려면 둘 다 남아 있어야 한다. */
+    var keepSched=(d.pay||{}).schedOn||'';
     body.pay={state:'paid', on:on, at:nowISO(), by:S.me.id, memo:S.payMemo||'', amount:expTotal(d)};
+    if(keepSched) body.pay.schedOn=keepSched;
     body.updatedAt=nowISO();
     var bank=S.payBank||'';
     S.db.doc('docs/'+d.id).set(body).then(function(){
       S.confirmPay=null; S.payMemo=''; S.payOn=''; S.payBank='';
       notify(d.drafter, '「'+docLabel(d)+'」 '+won(expTotal(d))+' 지급이 끝났습니다', d.id);
+      slackSay('paid','*지급 완료* 「'+docLabel(d)+'」 '+won(expTotal(d))+
+        '\n이체일 '+on+(d.payee?(' · 받는 사람 '+d.payee):'')+
+        (keepSched&&keepSched!==on?('\n(예정 '+keepSched+' → 실제 '+on+')'):''),
+        appLink('docs',d.id));
       if(!bank){ flash('지급 완료로 기록했습니다'); return render(); }
       var ev=d.eventId?S.events[d.eventId]:null;
       postLed('doc:'+d.id,{
@@ -4953,6 +5007,16 @@
     if(t.id==='newDocNo'){ S.newPanel=null; render(); return; }
     if(t.id==='newDocGo') return newDoc('official',S.newPanel);
     if((el=t.closest('[data-nscope]'))&&S.newPanel){ S.newPanel.scope=el.dataset.nscope; render(); return; }
+    if(t.id==='schedGo'){
+      var sd=S.docSel&&S.docs[S.docSel];
+      if(sd) return setSched(sd, ($('#schedOn')&&$('#schedOn').value)||'');
+      return;
+    }
+    if(t.id==='schedClear'){
+      var sc=S.docSel&&S.docs[S.docSel];
+      if(sc) return setSched(sc,'');
+      return;
+    }
     if(t.id==='newExp') return newDoc('expense');
     if((el=t.closest('[data-newap]'))) return newDoc(el.dataset.newap);
     if(t.id==='dback'){ S.docSel=null; S.confirmDocDel=null; remember(); render(); return; }
@@ -5079,6 +5143,7 @@
     if(t.id==='rcvAmt'){ S.rcvAmt=t.value; return; }
     if(t.id==='rcvBank'){ S.rcvBank=t.value; return; }
     if(t.id==='rcvMemo'){ S.rcvMemo=t.value; return; }
+    if(t.id==='schedOn'){ S.schedOn=t.value; return; }
     if(t.id==='payBank'||t.id==='evPayBank'){ S.payBank=t.value; return; }
     if(t.id==='evPayWh'){ S.payWh=!!t.checked; return; }
     if(t.id==='ldfMonth'){ S.ledMonth=t.value; pickRender('ldfMonth'); return; }
@@ -5263,6 +5328,22 @@
     ref.set(body).then(function(){S.view='docs';S.docSel=ref.id;S.newPanel=null;remember();render();})
       .catch(function(e){errbar('문서 생성 실패 '+(e&&e.code||''));});
   }
+  /* 지급 예정일만 적어둔다. 돈은 아직 안 나갔으니 장부는 건드리지 않는다. */
+  function setSched(d,on){
+    if(!S.db) return;
+    if(!(myRole()==='accounting'||S.me.canEdit)) return errbar('회계 역할을 가진 사람만 잡을 수 있습니다');
+    if(on&&!/^\d{4}-\d{2}-\d{2}$/.test(on)) return errbar('날짜를 넣어주세요');
+    var pay=clone(d.pay||{});
+    if(on){ pay.schedOn=on; pay.schedBy=S.me.id||''; pay.schedAt=nowISO(); }
+    else { delete pay.schedOn; delete pay.schedBy; delete pay.schedAt; }
+    S.db.doc('docs/'+d.id).update({pay:pay,updatedAt:nowISO()}).then(function(){
+      S.schedOn='';
+      flash(on?('지급 예정일 '+on+' 으로 잡았습니다'):'예정을 지웠습니다');
+      if(on) slackSay('due', docLabel(d)+' — 지급 예정일 '+on+' ('+won(expTotal(d))+')', appLink('docs',d.id));
+      render();
+    }).catch(function(e){ errbar('저장 실패 '+(e&&e.code||'')); });
+  }
+
   function removeDoc(){
     var id=S.docSel; if(!S.db||!id)return;
     /* 장부에 전표가 꽂힌 문서는 지울 수 없다. 행사와 같은 이유다 —
@@ -5348,6 +5429,10 @@
       S.db.doc('events/'+ev.id).update({status:'paid',paidOn:on,updatedAt:nowISO()})
         .then(function(){
           S.payOn=''; S.payBank=''; logApproval(ev,'paid');
+          slackSay('settled','*정산 완료* 「'+(ev.name||'행사')+'」\n'+
+            '사례비 '+won(gross)+' · '+(ev.members||[]).length+'명'+
+            (wh?('\n원천세 '+won(txTot)+' 공제, 실지급 '+won(net)):'')+
+            '\n이체일 '+on, appLink('settle',ev.id));
           if(!bank){ flash(on+' 지급으로 기록했습니다'); return render(); }
           return postLed('ev:'+ev.id,{
             on:on, dir:'out', amt:net, bank:bank,
