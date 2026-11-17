@@ -1788,6 +1788,32 @@
            ' placeholder="'+esc(f.ph||'')+'"'+(f.t==='n'?' inputmode="numeric"':'')+'></div>';
   }
 
+  /* 종이로 내는 신청서에는 누가 쓰고 누가 결재했는지가 문서 안에 있어야 한다.
+     화면의 결재선은 화면에만 있다. 인쇄하면 사라진다. */
+  function signBox(d){
+    var L=(d.steps||[]);
+    if(!L.length) return '';
+    var th='padding:4px 10px;border:1px solid #bbb;background:var(--bg);'+
+           'font-size:11.5px;font-weight:600;color:#555;text-align:center';
+    var td='padding:10px;border:1px solid #bbb;text-align:center;font-size:13px;height:40px;min-width:68px;white-space:nowrap';
+    var tdd='padding:3px 10px;border:1px solid #bbb;text-align:center;font-size:11px;color:#777';
+    /* 전역 table{width:100%} 이 있어서 width 를 안 적으면 한 칸짜리 표가
+       문서 폭을 다 먹는다.
+       띄우지(float) 않는다. 띄우면 가운데 정렬한 제목 위로 올라앉는다.
+       종이 문서도 결재란은 제목 위, 오른쪽에 따로 놓는다. */
+    return '<div style="text-align:right;margin:6px 0 2px">'+
+      '<table style="width:auto;display:inline-table;border-collapse:collapse">'+
+      '<tr>'+L.map(function(x,i){ return '<th style="'+th+'">'+(i===0?'기안':'결재')+'</th>'; }).join('')+'</tr>'+
+      '<tr>'+L.map(function(x){
+        return '<td style="'+td+'">'+esc(nameOf(x.uid))+
+          (x.state==='approved'?' <span style="color:var(--accent-ink)">(인)</span>'
+           :x.state==='rejected'?' <span style="color:var(--bad)">(반려)</span>':'')+'</td>';
+      }).join('')+'</tr>'+
+      '<tr>'+L.map(function(x){
+        return '<td style="'+tdd+'">'+esc(x.at?ymd(x.at):'')+'</td>';
+      }).join('')+'</tr>'+
+      '</table></div>';
+  }
   function applyPreview(d){
     var A=applySchema(d.type)||{f:[]};
     var rows=A.f.map(function(f){
@@ -1805,6 +1831,7 @@
     }
     return '<div class="doc">'+
       docHead('마이티블레싱')+'<hr>'+
+      signBox(d)+
       '<h1 style="text-align:center;font-size:19px;margin:18px 0 6px">'+esc(DOC_KIND[d.type]||'')+'</h1>'+
       '<p style="text-align:center;color:#666;font-size:12.5px;margin:0 0 16px">'+
         esc(d.no||'')+(d.date?' · '+esc(d.date):'')+'</p>'+
@@ -6191,6 +6218,31 @@
     applyNav(snap);
   });
 
+  /* 알림 링크는 주소 끝에 #docs/d1763… 을 달고 온다. 그런데 그걸 읽는
+     데가 없었다. 링크를 눌러도 ERP 만 열리고 그 문서로는 안 갔다. */
+  function hashNav(){
+    try{
+      var h=String(location.hash||'').replace(/^#/,'');
+      if(!h) return false;
+      var a=h.split('/'), v=a[0], id=decodeURIComponent(a[1]||'');
+      var known=false;
+      NAV.forEach(function(n){ if(n.k===v) known=true; });
+      if(!known) return false;
+      S.view=v;
+      if(v==='docs'&&id) S.docSel=id;
+      if(v==='settle'&&id) S.sel=id;
+      /* 한 번 읽고 주소에서 지운다. 남겨 두면 새로고침할 때마다
+         어디를 보고 있든 이 문서로 끌려온다. */
+      history.replaceState(history.state,'',location.pathname+location.search);
+      return true;
+    }catch(e){ return false; }
+  }
+  /* 이미 ERP 를 띄워 둔 채로 링크를 누르면 주소의 # 만 바뀐다.
+     새로 읽어들이는 일이 없으니 여기서 받아야 한다. */
+  window.addEventListener('hashchange',function(){
+    if(hashNav()){ remember(); render(); goTop(); }
+  });
+
   function remember(){
     try{localStorage.setItem('mb-erp-nav',JSON.stringify({v:S.view,s:S.sel,d:S.docSel}));}catch(e){}
     syncHistory();
@@ -6657,6 +6709,7 @@
   function boot(){
     try{var s=JSON.parse(localStorage.getItem('mb-erp-nav')||'{}');
       if(s.v)S.view=s.v; if(s.s)S.sel=s.s; if(s.d)S.docSel=s.d;}catch(e){}
+    hashNav();          /* 주소에 적힌 자리가 있으면 그쪽이 이긴다 */
     renderNav();
     syncHistory();
     if(sbConfigured()) return startSupabase();
