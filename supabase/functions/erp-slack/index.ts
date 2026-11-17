@@ -58,6 +58,19 @@ async function postSlack(text: string, money = false) {
     ? env("SLACK_WEBHOOK_MONEY") || env("SLACK_WEBHOOK_URL")
     : env("SLACK_WEBHOOK_URL");
   if (!url) return { ok: false, error: "웹후크 주소가 설정되어 있지 않습니다" };
+  /* 칸을 헷갈려 봇 토큰을 여기 넣는 일이 생긴다. 그대로 fetch 하면
+     「Invalid URL」 한 줄만 돌아오고, 그 말로는 어느 칸이 잘못됐는지
+     알 수 없다. 무엇이 들어왔는지 말해 준다 — 단, 값은 안 보여준다. */
+  if (!/^https:\/\/hooks\.slack\.com\//.test(url)) {
+    return {
+      ok: false,
+      error: url.startsWith("xoxb-")
+        ? `${money ? "SLACK_WEBHOOK_MONEY" : "SLACK_WEBHOOK_URL"} 에 봇 토큰이 들어가 있습니다. ` +
+          "웹후크 주소(https://hooks.slack.com/services/…)로 바꾸고, 토큰은 SLACK_BOT_TOKEN 에 넣어주세요."
+        : `${money ? "SLACK_WEBHOOK_MONEY" : "SLACK_WEBHOOK_URL"} 이 웹후크 주소가 아닙니다. ` +
+          "https://hooks.slack.com/services/… 로 시작해야 합니다.",
+    };
+  }
   const r = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json" },
