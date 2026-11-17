@@ -1046,6 +1046,29 @@
   }
 
   /* ============ 렌더 ============ */
+  /* 화면 맨 위로. 탭을 옮겼는데 아까 보던 중간 높이에 그대로 서 있으면
+     바뀐 게 없어 보여서 결국 새로고침을 누르게 된다. */
+  function goTop(){
+    try{ window.scrollTo(0,0); }catch(e){}
+    try{ document.documentElement.scrollTop=0; document.body.scrollTop=0; }catch(e){}
+  }
+
+  /* 드롭다운에서 하나 고른 순간, 운영체제가 띄운 목록은 아직 닫히는 중이다.
+     그 틈에 화면을 통째로 다시 그리면 목록이 매달려 있던 그 <select> 가
+     사라진다. 그러면 다음에 한 번 더 눌러도 목록이 안 열린다.
+     ― 한 번 고르면 다른 걸로 못 바꾸던 게 이것 때문이다.
+
+     그래서 한 박자 늦춰 그리고, 그린 뒤에 같은 자리로 초점을 돌려준다.
+     초점이 돌아와야 키보드로 위아래 눌러 고르던 것도 안 끊긴다. */
+  function pickRender(id){
+    setTimeout(function(){
+      render();
+      if(!id) return;
+      var e=$('#'+id); if(!e||!e.focus) return;
+      try{ e.focus({preventScroll:true}); }catch(err){ try{ e.focus(); }catch(e2){} }
+    },0);
+  }
+
   function render(){
     app=$('#app')||app; if(!app)return;
     renderNav();
@@ -1982,7 +2005,7 @@
     if(dir==='move'){ d.to=g('ldTo')||d.to; }
     else { d.biz=g('ldBiz')||d.biz; d.item=g('ldItem')||d.item;
            d.party=g('ldParty')||d.party; d.way=g('ldWay')||d.way; d.payer=g('ldPayer')||d.payer; }
-    S.ledDraft=d; render();
+    S.ledDraft=d; pickRender('ldDir');
   }
 
   /* ─── 자동 전표 ───
@@ -2150,7 +2173,7 @@
     if(biz!=='다. 예배운영') d.ev='';
     S.ledDraft=d;
     /* 행사 칸이 생기거나 사라질 때만 다시 그린다 */
-    if((was==='다. 예배운영')!==(biz==='다. 예배운영')) render();
+    if((was==='다. 예배운영')!==(biz==='다. 예배운영')) pickRender('ldBiz');
   }
 
   /* ─── 행사별 수지 ───
@@ -4143,7 +4166,7 @@
       /* 그 사이에 새로 로그인한 사람이 있을 수 있다. members 는 실시간이 아니라
          여기 들어올 때 한 번 다시 읽는다. */
       if(S.view==='settle'||S.view==='roles') refreshMembers();
-      remember(); render(); return;
+      remember(); render(); goTop(); return;
     }
     if((el=t.closest('[data-go]'))){
       var g=el.dataset.go;
@@ -4151,23 +4174,23 @@
       else { S.view='settle'; S.sel=g.slice(3); }
       remember(); render(); return;
     }
-    if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); return; }
-    if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); return; }
-    if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); return; }
+    if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); goTop(); return; }
+    if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); goTop(); return; }
+    if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); goTop(); return; }
     if((el=t.closest('[data-amain]'))){
       S.acctMain=el.dataset.amain; S.ledEdit=null; S.bankEdit=null; S.ledDraft=null;
       S.ledDel=null; S.bankDel=null;
       S.advEdit=null; S.advDraft=null; S.advPay=null; S.advDel=null; S.advBack=null;
-      remember(); render(); return;
+      remember(); render(); goTop(); return;
     }
     /* ── 개인별 급여 ── */
     if((el=t.closest('[data-paywho]'))){
       S.payWho=el.dataset.paywho; S.payYm=''; S.view='settle'; S.setTab='people';
-      S.personEdit=null; S.personDel=null; remember(); render(); return;
+      S.personEdit=null; S.personDel=null; remember(); render(); goTop(); return;
     }
-    if(t.id==='payBack'){ S.payWho=null; S.payYm=''; render(); return; }
+    if(t.id==='payBack'){ S.payWho=null; S.payYm=''; render(); goTop(); return; }
     /* ── 대신결제 ── */
-    if((el=t.closest('[data-adwho]'))){ S.advWho=el.dataset.adwho; render(); return; }
+    if((el=t.closest('[data-adwho]'))){ S.advWho=el.dataset.adwho; render(); goTop(); return; }
     if(t.id==='adNew'){ S.advEdit='new'; S.advDraft=null; render(); return; }
     if(t.id==='adCancel'){ S.advEdit=null; S.advDraft=null; render(); return; }
     if(t.id==='adSave'){ return saveAdvForm(); }
@@ -4241,7 +4264,7 @@
     }
     if(t.id==='ldSave') return saveLedForm();
 
-    if((el=t.closest('[data-stab]'))){ S.payWho=null; S.payYm=''; S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); return; }
+    if((el=t.closest('[data-stab]'))){ S.payWho=null; S.payYm=''; S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); goTop(); return; }
     if(t.id==='pNew'){ S.personEdit='new'; render(); return; }
     if(t.id==='pCancel'||t.id==='pfCancel'){ S.personEdit=null; render(); return; }
     if((el=t.closest('[data-pedit]'))){ S.personEdit=el.dataset.pedit; render(); return; }
@@ -4266,7 +4289,7 @@
         .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
       return;
     }
-    if((el=t.closest('[data-rtab]'))){ S.repTab=el.dataset.rtab; S.whEdit=null; remember(); render(); return; }
+    if((el=t.closest('[data-rtab]'))){ S.repTab=el.dataset.rtab; S.whEdit=null; remember(); render(); goTop(); return; }
     if(t.id==='whCsv') return whCsv();
     if((el=t.closest('[data-whfix]'))){ S.whEdit=el.dataset.whfix; render(); return; }
     if((el=t.closest('[data-whdone]'))){ S.whEdit=null; render(); return; }
@@ -4385,7 +4408,7 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
-    if(t.id==='payYm'){ S.payYm=t.value; render(); return; }
+    if(t.id==='payYm'){ S.payYm=t.value; pickRender('payYm'); return; }
     if(t.id==='adPayOn'){ S.advOn=t.value; return; }
     if(t.id==='adPayBank'){ S.advBank=t.value; return; }
     if(t.id==='adBiz'){
@@ -4398,7 +4421,7 @@
       var was=d.biz; d.biz=t.value;
       d.ev=(t.value==='다. 예배운영')?(g('adEv')||d.ev||''):'';
       S.advDraft=d;
-      if((was==='다. 예배운영')!==(t.value==='다. 예배운영')) render();
+      if((was==='다. 예배운영')!==(t.value==='다. 예배운영')) pickRender('adBiz');
       return;
     }
     if(t.id==='adEv'){ if(S.advDraft) S.advDraft.ev=t.value; return; }
@@ -4408,9 +4431,9 @@
     if(t.id==='rcvMemo'){ S.rcvMemo=t.value; return; }
     if(t.id==='payBank'||t.id==='evPayBank'){ S.payBank=t.value; return; }
     if(t.id==='evPayWh'){ S.payWh=!!t.checked; return; }
-    if(t.id==='ldfMonth'){ S.ledMonth=t.value; render(); return; }
-    if(t.id==='ldfBank'){ S.ledBank=t.value; render(); return; }
-    if(t.id==='ldfBiz'){ S.ledBiz=t.value; render(); return; }
+    if(t.id==='ldfMonth'){ S.ledMonth=t.value; pickRender('ldfMonth'); return; }
+    if(t.id==='ldfBank'){ S.ledBank=t.value; pickRender('ldfBank'); return; }
+    if(t.id==='ldfBiz'){ S.ledBiz=t.value; pickRender('ldfBiz'); return; }
     if(t.id==='ldDir'){ return ledDirChanged(t.value); }
     if(t.id==='ldBiz'){ return ledBizChanged(t.value); }
     if(t.id==='ldEv'){ if(S.ledDraft) S.ledDraft.ev=t.value; return; }
@@ -4509,7 +4532,7 @@
          바꾼 뒤에도 대내/대외 단추로 다시 고를 수 있다. */
       var f=FORMS[t.value];
       if(f&&f.scope) S.newPanel.scope=f.scope;
-      render(); return;
+      pickRender('nform'); return;
     }
     if(t.id==='logoFile') return onLogoFile(t.files&&t.files[0]);
     if(t.id==='avaFile')  return onAvatarFile(t.files&&t.files[0]);
@@ -4517,19 +4540,19 @@
     var xd=S.docSel&&S.docs[S.docSel];
     if(xd&&xd.type==='expense'){
       var sm={xEvent:'eventId',xAccount:'account',xMethod:'method'};
-      if(sm[t.id]){ xd[sm[t.id]]=t.value; touch('doc',xd.id); render(); return; }
+      if(sm[t.id]){ xd[sm[t.id]]=t.value; touch('doc',xd.id); pickRender(t.id); return; }
     }
     if(xd&&xd.type!=='expense'&&t.id==='dScope'){
-      xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); render(); return;
+      xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); pickRender('dScope'); return;
     }
-    if(t.id==='whY'){ S.whYm=t.value+'-'+whMonth().slice(5,7); render(); return; }
-    if(t.id==='whM'){ S.whYm=whMonth().slice(0,4)+'-'+t.value; render(); return; }
-    if(t.id==='repY'){ S.rep.y=+t.value; render(); return; }
-    if(t.id==='repM'){ S.rep.seg=t.value||'all'; render(); return; }
+    if(t.id==='whY'){ S.whYm=t.value+'-'+whMonth().slice(5,7); pickRender('whY'); return; }
+    if(t.id==='whM'){ S.whYm=whMonth().slice(0,4)+'-'+t.value; pickRender('whM'); return; }
+    if(t.id==='repY'){ S.rep.y=+t.value; pickRender('repY'); return; }
+    if(t.id==='repM'){ S.rep.seg=t.value||'all'; pickRender('repM'); return; }
     if(t.id==='repNet'){ S.repNet=t.checked; render(); return; }
     if(t.dataset&&t.dataset.roleFor)return setRole(t.dataset.roleFor,t.value);
     if(t.id==='evPayOn'){ S.payOn=t.value; return; }
-    if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);render();}}
+    if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);pickRender('unit');}}
   });
 
   /* 붙임 줄은 미리보기 맨 끝에만 나온다. 그 한 조각만 갈아끼운다. */
