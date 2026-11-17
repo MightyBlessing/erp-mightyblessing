@@ -4541,9 +4541,16 @@
      그래서 보내는 건 「무슨 일이 있었고 어디로 가면 되는지」 한 줄이면 된다.
 
      보내다 실패해도 하던 일을 막지 않는다. 결재가 슬랙 때문에 멈추면 안 된다. */
+  /* 주소가 둘이면 링크가 갈린다. 다른 주소로 들어가면 로그인이 따로 잡혀서
+     「처음 보는 사람」이 된다. 알림 링크는 늘 정식 주소 하나를 가리켜야 한다.
+     설정에 적어두지 않으면 지금 열어둔 주소를 쓴다. */
+  function appBase(){
+    var b=String((S.slack||{}).base||'').trim();
+    if(b){ return b.replace(/\/+$/,'')+'/'; }
+    return location.origin+location.pathname;
+  }
   function appLink(view,id){
-    var base=location.origin+location.pathname;
-    return base+'#'+view+(id?('/'+id):'');
+    return appBase()+'#'+view+(id?('/'+id):'');
   }
   /* 포도알·라테키가 쓰는 모양을 그대로 따른다. 같은 일터에서 알림이
      서로 다른 모양으로 오면 읽는 사람이 매번 형식을 새로 익혀야 한다.
@@ -4552,7 +4559,7 @@
        날짜 · 누구                     ← 부제, 굵게 안 함
        *라벨*
        값
-       <링크|여기서 하기 :arrow_upper_right:>
+       :arrow_upper_right: <링크|여기서 하기>
        :large_purple_circle: *마이티블레싱 ERP* · <주소|주소>
   */
   var SLACK_FACE={
@@ -4589,10 +4596,13 @@
         if(r[1]==null||r[1]==='') return;
         L.push('*'+r[0]+'*'); L.push(String(r[1]));
       });
-      if(o.link) L.push('<'+o.link+'|'+(o.cta||'ERP에서 열기')+' :arrow_upper_right:>');
+      /* 링크 라벨 안에 :이모지: 를 넣으면 슬랙이 링크 밖으로 밀어낸다.
+         이모지는 라벨 앞에 따로 둔다. */
+      if(o.link) L.push(':arrow_upper_right: <'+o.link+'|'+(o.cta||'ERP에서 열기')+'>');
       if(o.foot) L.push(o.foot);
-      var base=location.origin+location.pathname;
-      L.push(':large_purple_circle: *마이티블레싱 ERP* · <'+base+'|'+location.host+'>');
+      var base=appBase();
+      var host=base.replace(/^https?:\/\//,'').replace(/\/.*$/,'');
+      L.push(':large_purple_circle: *마이티블레싱 ERP* · <'+base+'|'+host+'>');
 
       /* no-cors 로 던진다. 웹후크는 응답을 안 읽어도 되고,
          브라우저에서 바로 쏘려면 이 길밖에 없다. */
@@ -4650,6 +4660,12 @@
           (canCfg?'':' disabled')+'></div>'+
         '<p class="hint" style="margin:-4px 0 14px">여기를 채우면 <b>지급 예정 · 지급 완료 · 정산 완료</b>는 이 채널로 갑니다. '+
           '결재는 위 채널로 갑니다. 돈 이야기를 따로 두고 싶을 때 쓰세요.</p>'+
+        '<div class="field"><label for="slBase">알림 링크에 쓸 ERP 주소</label>'+
+          '<input id="slBase" type="url" value="'+esc(sl.base||'')+'" placeholder="'+esc(location.origin+location.pathname)+'"'+
+          (canCfg?'':' disabled')+'></div>'+
+        '<p class="hint" style="margin:-4px 0 14px">비워두면 <b>지금 열어둔 주소</b>를 씁니다. '+
+          '주소가 둘 이상이면 로그인이 주소마다 따로 잡혀서, 알림을 눌러 들어간 사람이 '+
+          '<b>처음 보는 사람</b>이 됩니다. 쓰는 주소 하나를 여기 적어두세요.</p>'+
         '<div class="field"><label>무엇을 알릴까요</label>'+
           '<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px">'+
             SLACK_EV.map(function(x){
@@ -5007,6 +5023,8 @@
     if(t.id==='slSave'){
       var hook=($('#slHook')&&$('#slHook').value||'').trim();
       var hook2=($('#slHook2')&&$('#slHook2').value||'').trim();
+      var base=($('#slBase')&&$('#slBase').value||'').trim();
+      if(base && !/^https?:\/\//.test(base)) return errbar('ERP 주소는 https:// 로 시작해야 합니다');
       if(hook && hook.indexOf('https://hooks.slack.com/')!==0)
         return errbar('슬랙 웹후크 주소는 https://hooks.slack.com/ 으로 시작합니다');
       if(hook2 && hook2.indexOf('https://hooks.slack.com/')!==0)
@@ -5017,7 +5035,7 @@
         on[x[0]] = c ? !!c.checked : true;
       });
       S.slackBusy=true; render();
-      return saveCfg('slack',{hook:hook,hook2:hook2,on:on}).then(function(){
+      return saveCfg('slack',{hook:hook,hook2:hook2,base:base,on:on}).then(function(){
         S.slackBusy=false; flash('저장했습니다'); render();
       }).catch(function(e){ S.slackBusy=false; errbar('저장 실패 '+(e&&(e.code||e.message)||'')); render(); });
     }
