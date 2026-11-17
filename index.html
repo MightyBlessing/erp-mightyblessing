@@ -442,8 +442,12 @@
   };
   /* 슬랙이 하는 일(소통·진행·일정·파일)은 여기 안 만든다.
      ERP 는 공식 기록만 쥔다 — 결재, 돈, 정산, 권한. */
+  /* 열쇠(k)는 'settle' 그대로 둔다. 저장해 둔 화면 자리와 알림 링크가
+     이 이름을 가리킨다. 바꾸면 쓰던 사람이 엉뚱한 데로 떨어진다.
+     보이는 이름만 바꾼다 — 정산은 행사의 마지막 단계일 뿐인데,
+     행사를 만들고 인력을 넣는 일까지 「정산」 밑에 있으니 말이 안 맞았다. */
   var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계·재무'},
-           {k:'settle',t:'정산'},{k:'report',t:'보고서'},
+           {k:'settle',t:'행사'},{k:'report',t:'보고서'},
            {k:'roles',t:'사용자·권한'},{k:'conf',t:'시스템 설정'}];
   var DOC_KIND={official:'공문',expense:'지출결의서',
     purchase:'구매품의서', goods:'물품구매 신청서',
@@ -1319,7 +1323,7 @@
       if(lg.innerHTML!==want) lg.innerHTML=want;
     }
     var t=$('#ptitle');
-    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계·재무',settle:'정산',
+    if(t)t.textContent={dash:'대시보드',docs:'전자결재',acct:'회계·재무',settle:'행사',
       report:'손익 보고서',roles:'사용자·권한',conf:'시스템 설정'}[S.view]||'업무관리시스템';
     renderBell();
     renderWho();
