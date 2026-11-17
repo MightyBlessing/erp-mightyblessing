@@ -238,6 +238,21 @@ function nextExpenseNo(rows: { data: Record<string, any> }[]) {
   return `${pre}-${String(mx + 1).padStart(3, "0")}호`;
 }
 
+/* 행사 채널에서 쓰는 돈이 다 그 행사 것은 아니다. 사무실 커피, 택배비처럼
+   회사 운영비가 섞인다. 「운영비」 한 마디를 넣으면 행사에 안 단다.
+   거꾸로는 안 둔다 — 운영 채널에서 행사 이름을 받아 적게 하면 오타가 나고,
+   오타는 조용히 틀린 행사에 꽂힌다. */
+function stripOps(text: string) {
+  const w = text.trim().split(/\s+/).filter(Boolean);
+  const keep: string[] = [];
+  let ops = false;
+  for (const x of w) {
+    if (/^#?(운영비|운영|공통|회사)$/.test(x)) { ops = true; continue; }
+    keep.push(x);
+  }
+  return { text: keep.join(" "), ops };
+}
+
 /* 「교촌치킨 52000 스태프 야식」 → 거래처 / 금액 / 내역.
    금액은 처음 나오는 숫자 덩어리로 본다. 쉼표는 빼고 읽는다. */
 function parseExpense(text: string) {
@@ -276,14 +291,15 @@ async function eventOfChannel(chId: string, chName: string) {
 }
 
 async function slashExpense(text: string, who: string, chId = "", chName = "") {
-  const got = parseExpense(text);
+  const cut = stripOps(text);
+  const got = parseExpense(cut.text);
   if (!got || !got.payee) {
     return ephemeral(
       "이렇게 쳐주세요 — `/지출 교촌치킨 52000 스태프 야식`\n" +
         "`거래처 금액 내역` 순서입니다. 내역은 없어도 됩니다.",
     );
   }
-  const ev = await eventOfChannel(chId, chName);
+  const ev = cut.ops ? null : await eventOfChannel(chId, chName);
   const rows = await docs("docs");
   const now = new Date().toISOString();
   const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
@@ -333,8 +349,10 @@ async function slashExpense(text: string, who: string, chId = "", chName = "") {
       (got.what ? `\n${got.what}` : "") +
       (ev
         ? `\n*행사* ${ev.name}`
+        : cut.ops
+        ? `\n*사업* 운영비`
         : chName
-        ? `\n_이 채널에 묶인 행사가 없습니다. 행사 없이 들어왔습니다._`
+        ? `\n_이 채널에 묶인 행사가 없습니다. 운영비로 들어왔습니다._`
         : "") +
       `\n:arrow_upper_right: <${base()}#docs/${id}|ERP에서 열어 올리기>` +
       `\n_아직 올라가지 않았습니다. 열어서 확인하고 상신해 주세요._`,
@@ -511,7 +529,8 @@ function alreadyMade(rows: { data: Record<string, any> }[], eventId: string) {
 
 async function receiptToExpense(ev: any, eventId: string) {
   const text = String(ev.text || "").replace(/^\s*\/?지출\s*/, "");
-  const got = parseExpense(text);
+  const cut = stripOps(text);
+  const got = parseExpense(cut.text);
   if (!got || !got.payee) {
     await slackPostMessage(
       ev.channel,
@@ -530,7 +549,7 @@ async function receiptToExpense(ev: any, eventId: string) {
      이름을 한 번 물어본다. */
   const info: any = await slackApi("conversations.info", { channel: String(ev.channel || "") });
   const chName = String(info?.channel?.name || "");
-  const evt = await eventOfChannel(String(ev.channel || ""), chName);
+  const evt = cut.ops ? null : await eventOfChannel(String(ev.channel || ""), chName);
   const now = new Date().toISOString();
   const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
 
@@ -593,7 +612,7 @@ async function receiptToExpense(ev: any, eventId: string) {
   const L = [
     `:memo: *지출결의서* — ${got.payee} ${won(got.amt)}`,
     got.what || "",
-    evt ? `*행사* ${evt.name}` : "",
+    evt ? `*행사* ${evt.name}` : cut.ops ? "*사업* 운영비" : "",
     files.length ? `*영수증* ${files.length}장 붙였습니다` : "*영수증* 못 가져왔습니다",
     me
       ? (steps.length > 1
