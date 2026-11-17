@@ -1,0 +1,18 @@
+# Supabase CLI 설정.
+project_id = "ykyuhuhhxnlhbfjiuihv"
+
+# ───────────────────────────────────────────────────────────
+# 왜 verify_jwt = false 인가
+# ───────────────────────────────────────────────────────────
+# 기본값은 true 다. 그러면 Supabase 의 문지기가 Authorization 헤더가
+# 없는 요청을 함수에 닿기도 전에 401 로 돌려보낸다.
+#
+# 그런데 매일 아침 깨우는 pg_cron 은 로그인한 사람이 아니다.
+# 토큰이 없다. 그래서 문지기를 끄고, 함수가 직접 신분을 확인한다.
+#
+#   digest  → CRON_SECRET 이 맞아야 한다 (index.ts)
+#   notify  → Bearer 토큰을 /auth/v1/user 에 물어본다 (index.ts)
+#
+# 즉 문을 연 게 아니라 문지기를 우리 쪽으로 옮긴 것이다.
+[functions.erp-slack]
+verify_jwt = false
