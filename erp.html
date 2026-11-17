@@ -4566,10 +4566,10 @@
     var money=(kind==='due'||kind==='paid'||kind==='settled');
     return (money&&sl.hook2)?sl.hook2:(sl.hook||'');
   }
-  function slackSay(kind, o){
+  function slackSay(kind, o, hookOverride){
     try{
       var sl=S.slack||{};
-      var hook=slackHook(kind);
+      var hook=hookOverride||slackHook(kind);
       if(!hook) return Promise.resolve(false);
       if((sl.on||{})[kind]===false) return Promise.resolve(false);
 
@@ -5013,16 +5013,20 @@
       }).catch(function(e){ S.slackBusy=false; errbar('저장 실패 '+(e&&(e.code||e.message)||'')); render(); });
     }
     if(t.id==='slTest'){
+      /* 아직 저장 안 하고 눌러보는 사람이 많다. 화면에 적힌 주소로 바로 쏜다. */
+      var typed=($('#slHook')&&$('#slHook').value||'').trim();
+      var cur=S.slack||{};
+      if(!typed && !cur.hook) return errbar('웹후크 주소를 먼저 넣어주세요');
+      if(typed && typed.indexOf('https://hooks.slack.com/')!==0)
+        return errbar('슬랙 웹후크 주소는 https://hooks.slack.com/ 으로 시작합니다');
       S.slackBusy=true; render();
+      var done=function(){ S.slackBusy=false; flash('보냈습니다. 슬랙 채널을 확인해 주세요'); render(); };
       return slackSay('test',{sub:'이 글이 보이면 연결된 것입니다.',
         rows:[['보내는 사람', S.me.name||'—'],
-              ['알릴 항목', SLACK_EV.filter(function(x){return (sl.on||{})[x[0]]!==false;})
+              ['알릴 항목', SLACK_EV.filter(function(x){return (cur.on||{})[x[0]]!==false;})
                              .map(function(x){return x[1];}).join(' · ')||'없음']],
-        link:appLink('dash',''), cta:'ERP 열기'}).then(function(){
-        S.slackBusy=false;
-        flash('보냈습니다. 슬랙 채널을 확인해 주세요');
-        render();
-      });
+        link:appLink('dash',''), cta:'ERP 열기'}, typed)
+        .then(done).catch(done);
     }
     if(t.id==='pLink')   return linkAll();
     if(t.id==='pFixOrphan') return fixOrphans();
