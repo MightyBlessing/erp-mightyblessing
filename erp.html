@@ -435,7 +435,73 @@
   var NAV=[{k:'dash',t:'대시보드'},{k:'docs',t:'전자결재'},{k:'acct',t:'회계·재무'},
            {k:'settle',t:'정산'},{k:'report',t:'보고서'},
            {k:'roles',t:'사용자·권한'},{k:'conf',t:'시스템 설정'}];
-  var DOC_KIND={official:'공문',expense:'지출결의서'};
+  var DOC_KIND={official:'공문',expense:'지출결의서',
+    purchase:'구매품의서', goods:'물품구매 신청서',
+    trip:'출장신청서', leave:'휴가신청서', general:'일반 품의서'};
+
+  /* ─── 신청서 서식 ───
+     결재 틀(결재선·승인·반려·이력)은 공문·지출결의서와 똑같이 쓰고,
+     서식마다 다른 건 '어떤 칸이 있느냐' 뿐이다. 그래서 칸 목록만 적는다.
+     서식을 하나 더 만들 때 화면을 새로 그릴 일이 없다.
+
+     t  text · d 날짜 · n 숫자(원) · a 여러 줄 · s 고르기(o: 보기)
+     r  꼭 채워야 하는 칸 */
+  var APPLY={
+    purchase:{ sum:'amount', f:[
+      {k:'item',   l:'구매 품목',    t:'t', r:1, ph:'예: 무선 마이크 2대'},
+      {k:'vendor', l:'거래처 / 구입처', t:'t'},
+      {k:'amount', l:'예상 금액',    t:'n', r:1},
+      {k:'when',   l:'구매 예정일',   t:'d'},
+      {k:'acct',   l:'계정과목',     t:'s', o:function(){return ACC();}},
+      {k:'why',    l:'필요한 이유',   t:'a', r:1, ph:'왜 필요한지, 없으면 어떤 일이 생기는지'},
+      {k:'note',   l:'비고',        t:'a'}
+    ]},
+    goods:{ sum:'amount', f:[
+      {k:'item',   l:'신청 물품',    t:'t', r:1},
+      {k:'qty',    l:'수량',        t:'t', ph:'예: 2대 · 10권'},
+      {k:'amount', l:'예상 금액',    t:'n'},
+      {k:'when',   l:'필요한 날짜',   t:'d'},
+      {k:'where',  l:'사용처 / 보관처', t:'t', ph:'예: 컨테이너 · 사무실'},
+      {k:'why',    l:'사용 목적',    t:'a', r:1},
+      {k:'note',   l:'비고',        t:'a'}
+    ]},
+    trip:{ sum:'amount', f:[
+      {k:'where',  l:'출장지',       t:'t', r:1},
+      {k:'from',   l:'출발일',       t:'d', r:1},
+      {k:'to',     l:'복귀일',       t:'d', r:1},
+      {k:'with',   l:'동행자',       t:'t', ph:'없으면 비워두세요'},
+      {k:'move',   l:'이동 수단',     t:'t', ph:'예: KTX · 자차 · 렌터카'},
+      {k:'amount', l:'예상 경비',     t:'n'},
+      {k:'why',    l:'출장 목적',     t:'a', r:1},
+      {k:'note',   l:'비고',        t:'a'}
+    ]},
+    leave:{ days:1, f:[
+      {k:'kind',   l:'휴가 종류',     t:'s', r:1,
+       o:function(){return ['연차','반차(오전)','반차(오후)','병가','경조사','공가','무급','기타'];}},
+      {k:'from',   l:'시작일',       t:'d', r:1},
+      {k:'to',     l:'종료일',       t:'d', r:1},
+      {k:'why',    l:'사유',        t:'a'},
+      {k:'backup', l:'업무 인계자',    t:'t', ph:'자리를 비우는 동안 맡아줄 사람'},
+      {k:'tel',    l:'비상 연락처',    t:'t'}
+    ]},
+    general:{ f:[
+      {k:'why',    l:'품의 내용',     t:'a', r:1, ph:'무엇을 하려는지'},
+      {k:'effect', l:'기대 효과',     t:'a'},
+      {k:'when',   l:'시행 예정일',    t:'d'},
+      {k:'amount', l:'관련 금액',     t:'n', ph:'없으면 비워두세요'},
+      {k:'note',   l:'비고',        t:'a'}
+    ]}
+  };
+  function isApply(d){ return !!(d&&APPLY[d.type]); }
+  /* 휴가 일수. 반차는 0.5일로 센다. */
+  function leaveDays(d){
+    if(!d||!d.from||!d.to) return 0;
+    var a=new Date(d.from+'T00:00:00'), b=new Date(d.to+'T00:00:00');
+    if(isNaN(a)||isNaN(b)||b<a) return 0;
+    var n=Math.round((b-a)/86400000)+1;
+    if(String(d.kind||'').indexOf('반차')===0) return 0.5;
+    return n;
+  }
   var SCOPE={out:'대외용',in:'대내용'};
   /* 로고는 저장소에 같이 둔다. 공용 자산이라 사람마다 올릴 이유가 없다.
      역할 화면에서 올리면 그쪽이 우선한다. */
@@ -461,16 +527,11 @@
          '저희 마이티블레싱은 아래와 같이 행사를 준비하고 있습니다.',
          '이에 원활한 진행을 위하여 아래와 같이 협조를 요청드리오니, 살펴주시기를 바랍니다.'],
       k:['행사명','행사목적','일시','장소','주관','협조 요청 사항','담당자','기타사항']},
-    meeting:{
-      t:'회의 결과 보고의 건',
-      scope:'in',
-      p:['아래와 같이 회의를 진행하였기에 그 결과를 보고합니다.',
-         '결정된 사항은 아래 개요와 같으며, 후속 조치는 담당자별로 진행하겠습니다.'],
-      k:['회의명','일시','장소','참석자','주요 논의','결정사항','후속 조치','비고']},
     blank:{ t:'', p:[''], k:[] }
   };
   var FORM_LABEL={rent:'장소 대관 요청',propose:'행사 제안',notice:'행사 협조 요청',
-                  meeting:'회의 결과 보고',blank:'기타 (직접 작성)'};
+                  blank:'기타 (직접 작성)'};
+  /* 회의록·업무보고는 슬랙이 한다. 같은 걸 두 군데서 쓰면 둘 다 못 믿게 된다. */
   /* 계정과목 — 장부 분류. 세무·결산에서 이 단위로 묶인다. */
   /* 기본값. 시스템 설정에서 고치면 config/lists 가 우선한다.
      회사마다 계정과목이 다르고, 쓰다 보면 늘어난다. 코드를 고치게 둘 일이 아니다. */
@@ -1042,6 +1103,17 @@
       line:[], steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
   }
 
+  function newApplyBody(kind){
+    var body={type:kind, title:DOC_KIND[kind]||'신청서',
+      no:nextNo(kind), date:today(),
+      line:[], steps:[], status:'draft',
+      drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+    (APPLY[kind].f||[]).forEach(function(f){ body[f.k]=''; });
+    if(kind==='leave'){ body.from=today(); body.to=today(); body.kind='연차'; }
+    if(kind==='trip'){ body.from=today(); body.to=today(); }
+    return body;
+  }
+
   /* ============ 저장 ============ */
   var saveTimer=null,saving=false,dirty=null,dirtyKind=null;
   function touch(kind,id){
@@ -1249,8 +1321,12 @@
     var list=docList(S.docTab);
     app.innerHTML=
       '<div class="actions" style="margin-bottom:14px">'+
-        '<button class="btn primary" id="newDocOpen"'+(writable()?'':' disabled')+'>+ 공문 작성</button>'+
-        '<button class="btn primary" id="newExp"'+(writable()?'':' disabled')+'>+ 지출결의서</button></div>'+
+        '<button class="btn primary" id="newDocOpen"'+(writable()?'':' disabled')+'>+ 공문</button>'+
+        '<button class="btn primary" id="newExp"'+(writable()?'':' disabled')+'>+ 지출결의서</button>'+
+        Object.keys(APPLY).map(function(k){
+          return '<button class="btn" data-newap="'+k+'"'+(writable()?'':' disabled')+'>+ '+esc(DOC_KIND[k])+'</button>';
+        }).join('')+
+      '</div>'+
       (S.newPanel?newDocPanel():'')+
       '<div class="tabs">'+tabs.map(function(t){
         var n=docList(t[0]).length;
@@ -1459,8 +1535,133 @@
   }
 
   /* ---- 공문 작성/보기 ---- */
+  /* 신청서 한 칸. 서식이 달라도 그리는 법은 같다. */
+  function applyField(d,f,dis){
+    var v=d[f.k]==null?'':d[f.k];
+    var id='ap_'+f.k;
+    var lab='<label for="'+id+'">'+esc(f.l)+(f.r?' <span style="color:var(--bad)">*</span>':'')+'</label>';
+    if(f.t==='a')
+      return '<div class="field">'+lab+'<textarea id="'+id+'" data-apk="'+f.k+'" rows="3"'+dis+
+             ' placeholder="'+esc(f.ph||'')+'">'+esc(v)+'</textarea></div>';
+    if(f.t==='s'){
+      var opts=(typeof f.o==='function')?f.o():(f.o||[]);
+      return '<div class="field">'+lab+'<select id="'+id+'" data-apk="'+f.k+'"'+dis+'>'+
+        '<option value=""></option>'+
+        opts.map(function(o){ return '<option'+(v===o?' selected':'')+'>'+esc(o)+'</option>'; }).join('')+
+        '</select></div>';
+    }
+    var tp=f.t==='d'?'date':(f.t==='n'?'number':'text');
+    return '<div class="field">'+lab+'<input id="'+id+'" data-apk="'+f.k+'" type="'+tp+'" value="'+esc(v)+'"'+dis+
+           ' placeholder="'+esc(f.ph||'')+'"'+(f.t==='n'?' inputmode="numeric"':'')+'></div>';
+  }
+
+  function applyPreview(d){
+    var A=APPLY[d.type]||{f:[]};
+    var rows=A.f.map(function(f){
+      var v=d[f.k];
+      if(f.t==='n') v=num(v,0)?won(num(v,0)):'';
+      v=String(v==null?'':v).trim();
+      return '<tr><th style="width:130px;text-align:left;background:var(--bg)">'+esc(f.l)+'</th>'+
+        '<td style="white-space:pre-wrap">'+(v?esc(v):'<span style="color:var(--zero)">—</span>')+'</td></tr>';
+    }).join('');
+    var extra='';
+    if(A.days){
+      var n=leaveDays(d);
+      extra='<tr><th style="text-align:left;background:var(--bg)">일수</th>'+
+        '<td><b>'+(n?(n+'일'):'—')+'</b></td></tr>';
+    }
+    return '<div class="doc">'+
+      docHead('마이티블레싱')+'<hr>'+
+      '<h1 style="text-align:center;font-size:19px;margin:18px 0 6px">'+esc(DOC_KIND[d.type]||'')+'</h1>'+
+      '<p style="text-align:center;color:#666;font-size:12.5px;margin:0 0 16px">'+
+        esc(d.no||'')+(d.date?' · '+esc(d.date):'')+'</p>'+
+      '<table style="width:100%;border-collapse:collapse" class="prev">'+
+        '<tr><th style="width:130px;text-align:left;background:var(--bg)">기안자</th><td>'+esc(nameOf(d.drafter))+'</td></tr>'+
+        rows+extra+
+      '</table>'+
+    '</div>';
+  }
+
+  function renderApply(d){
+    var A=APPLY[d.type];
+    var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var dis=editable?'':' disabled';
+    var mine=isMyTurn(d);
+
+    var acts=[];
+    if(editable&&(d.steps||[]).length) acts.push('<button class="btn primary" data-dact="submit">결재 올리기</button>');
+    if(mine){ acts.push('<button class="btn primary" data-dact="approve">승인</button>');
+              acts.push('<button class="btn danger" data-dact="reject">반려</button>'); }
+    if(writable()&&st!=='draft'&&d.drafter===S.me.id&&st!=='approved') acts.push('<button class="btn" data-dact="cancel">취소</button>');
+    if(writable()&&(st==='rejected'||st==='canceled')&&d.drafter===S.me.id) acts.push('<button class="btn" data-dact="reopen">다시 작성</button>');
+    if(st==='approved'){
+      acts.push('<button class="btn primary" data-dact="pdf">PDF 내려받기</button>');
+      acts.push('<button class="btn" data-dact="print">인쇄</button>');
+    }
+
+    var lineUI=(d.steps||[]).map(function(x,i){
+      var tag=x.state==='approved'?'<span class="pill p-approved">승인</span>':x.state==='rejected'?'<span class="pill p-rejected">반려</span>':'<span class="pill p-pending">대기</span>';
+      return '<div class="person"><span style="font-family:var(--font-num);color:var(--muted);width:14px">'+(i+1)+'</span>'+
+        '<span class="nm">'+esc(nameOf(x.uid))+'</span>'+tag+
+        (editable?'<button class="del" data-lndel="'+i+'" aria-label="결재자 제거">×</button>':'')+'</div>';
+    }).join('');
+    var delCtl = (writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit))
+      ? (S.confirmDocDel===d.id
+          ? '<button class="btn danger sm" id="docDelYes">지웁니다</button><button class="btn sm" id="docDelNo" style="margin-left:5px">취소</button>'
+          : '<button class="btn sm" id="docDel">문서 삭제</button>')
+      : '';
+
+    var warn='';
+    if(A.sum&&num(d[A.sum],0)>0&&d.type!=='leave'){
+      warn='<div class="note n-info" style="margin-top:12px">'+
+        '여기 적은 금액은 <b>예상</b>입니다. 실제로 돈이 나갈 때는 '+
+        '<b>지출결의서</b>를 따로 올려야 장부에 잡힙니다. 이 문서만으로는 장부가 움직이지 않습니다.</div>';
+    }
+
+    app.innerHTML=
+      '<div class="actions" style="margin-bottom:14px">'+
+        '<button class="btn sm" id="dback">← 목록</button>'+
+        '<span style="flex:1"></span>'+delCtl+'</div>'+
+      '<div class="two">'+
+      '<div class="stack" style="min-width:0">'+
+        '<section class="card"><h2>'+esc(DOC_KIND[d.type])+'</h2>'+
+          '<div class="row2">'+
+            '<div class="field"><label for="apTitle">제목</label>'+
+              '<input id="apTitle" value="'+esc(d.title||'')+'"'+dis+'></div>'+
+            '<div class="field"><label for="apDate">기안일</label>'+
+              '<input id="apDate" type="date" value="'+esc(d.date||today())+'"'+dis+'></div>'+
+          '</div>'+
+          A.f.map(function(f){ return applyField(d,f,dis); }).join('')+
+          (A.days
+            ? '<div class="note '+(leaveDays(d)?'n-info':'n-warn')+'" style="margin-top:4px">'+
+                (leaveDays(d)?'<b>'+leaveDays(d)+'일</b> 신청입니다.'
+                            :'시작일과 종료일을 확인해 주세요. 종료일이 시작일보다 빠릅니다.')+'</div>'
+            : '')+
+          warn+
+        '</section>'+
+        '<section class="card"><h2>결재선</h2>'+
+          (lineUI?'<div class="people">'+lineUI+'</div>':'<div class="empty" style="padding:18px 8px">결재자를 추가하세요.</div>')+
+          (editable?'<div class="field" style="margin-top:12px"><input id="lnSearch" placeholder="이름으로 검색해 결재자 추가" autocomplete="off"></div><div class="people" id="lnResults"></div>':'')+
+          '<p class="hint" style="margin-top:8px">위에서부터 순서대로 결재합니다.</p>'+
+        '</section>'+
+      '</div><div class="stack" style="min-width:0">'+
+        evidenceCard(d)+
+        '<section class="card"><h2>미리보기</h2>'+applyPreview(d)+'</section>'+
+        '<section class="card"><h2>결재</h2>'+docSteps(d)+
+          (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
+        '</section>'+
+      '</div></div>';
+
+    if(editable){
+      var box=$('#lnSearch');
+      if(box){ box.addEventListener('focus',function(){lineSearch('');});
+               box.addEventListener('input',function(){lineSearch(box.value);}); }
+    }
+  }
+
   function renderDoc(d){
     if(d.type==='expense') return renderExpense(d);
+    if(isApply(d)) return renderApply(d);
     var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d);
@@ -1624,7 +1825,11 @@
     var nm=[(d.no||'').replace(/[\\/:*?"<>|]/g,'-'), (d.subject||d.title||'문서')].filter(Boolean).join(' ');
     return nm.replace(/\s+/g,' ').trim();
   }
-  function previewHTML(d){ return d.type==='expense'?expensePreview(d):docPreview(d); }
+  function previewHTML(d){
+    if(d.type==='expense') return expensePreview(d);
+    if(isApply(d)) return applyPreview(d);
+    return docPreview(d);
+  }
 
   /* 인쇄창을 거치면 브라우저가 날짜·쪽번호·웹주소를 종이에 같이 찍는다.
      그건 CSS로 못 막고 사람마다 설정이 달라진다. 그래서 화면을 직접 찍어
@@ -4740,6 +4945,7 @@
     if(t.id==='newDocGo') return newDoc('official',S.newPanel);
     if((el=t.closest('[data-nscope]'))&&S.newPanel){ S.newPanel.scope=el.dataset.nscope; render(); return; }
     if(t.id==='newExp') return newDoc('expense');
+    if((el=t.closest('[data-newap]'))) return newDoc(el.dataset.newap);
     if(t.id==='dback'){ S.docSel=null; S.confirmDocDel=null; remember(); render(); return; }
     if(t.id==='docDel'){ S.confirmDocDel=S.docSel; render(); return; }
     if(t.id==='docDelNo'){ S.confirmDocDel=null; render(); return; }
@@ -4802,6 +5008,25 @@
   document.addEventListener('input',function(e){
    try{
     var t=e.target;
+    /* 신청서 칸은 서식마다 다르니 이름으로 받지 않고 data-apk 로 받는다. */
+    if(t.dataset&&t.dataset.apk){
+      var ad=S.docSel&&S.docs[S.docSel];
+      if(ad&&isApply(ad)){
+        ad[t.dataset.apk]=t.value; touch('doc',ad.id);
+        /* 휴가 일수와 미리보기는 치는 즉시 바뀌어야 한다 */
+        if(t.type==='date'||t.tagName==='SELECT') render();
+        else softApply(ad);
+        return;
+      }
+    }
+    if(t.id==='apTitle'){
+      var at=S.docSel&&S.docs[S.docSel];
+      if(at){ at.title=t.value; touch('doc',at.id); softApply(at); return; }
+    }
+    if(t.id==='apDate'){
+      var aD=S.docSel&&S.docs[S.docSel];
+      if(aD){ aD.date=t.value; touch('doc',aD.id); softApply(aD); return; }
+    }
     var dc=S.docSel&&S.docs[S.docSel];
     if(dc){
       if(dc.type==='expense'){
@@ -4961,6 +5186,10 @@
     if(xd&&xd.type!=='expense'&&t.id==='dScope'){
       xd.scope=t.value; xd.seal=t.value!=='in'; touch('doc',xd.id); pickRender('dScope'); return;
     }
+    if(t.dataset&&t.dataset.apk){
+      var cd=S.docSel&&S.docs[S.docSel];
+      if(cd&&isApply(cd)){ cd[t.dataset.apk]=t.value; touch('doc',cd.id); pickRender('ap_'+t.dataset.apk); return; }
+    }
     if(t.id==='whY'){ S.whYm=t.value+'-'+whMonth().slice(5,7); pickRender('whY'); return; }
     if(t.id==='whM'){ S.whYm=whMonth().slice(0,4)+'-'+t.value; pickRender('whM'); return; }
     if(t.id==='repY'){ S.rep.y=+t.value; pickRender('repY'); return; }
@@ -4970,6 +5199,18 @@
     if(t.id==='evPayOn'){ S.payOn=t.value; return; }
     if(t.id==='unit'){var ev=S.sel&&S.events[S.sel]; if(ev){ev.unit=t.value;touch('ev',ev.id);pickRender('unit');}}
   });
+
+  /* 글자를 칠 때마다 화면을 통째로 다시 그리면 커서가 튄다.
+     미리보기 조각만 갈아끼운다. */
+  function softApply(d){
+    try{
+      var box=document.querySelector('.card .doc');
+      if(!box) return;
+      var tmp=document.createElement('div');
+      tmp.innerHTML=applyPreview(d);
+      box.parentNode.replaceChild(tmp.firstChild, box);
+    }catch(e){}
+  }
 
   /* 붙임 줄은 미리보기 맨 끝에만 나온다. 그 한 조각만 갈아끼운다. */
   function softPreview(d){
@@ -5007,7 +5248,10 @@
   function newDoc(kind,opt){
     if(!S.db)return;
     var ref=S.db.collection('docs').doc();
-    ref.set(kind==='expense'?newExpenseBody():newDocBody(opt&&opt.form,opt&&opt.scope)).then(function(){S.view='docs';S.docSel=ref.id;S.newPanel=null;remember();render();})
+    var body = kind==='expense' ? newExpenseBody()
+             : APPLY[kind]      ? newApplyBody(kind)
+             :                    newDocBody(opt&&opt.form,opt&&opt.scope);
+    ref.set(body).then(function(){S.view='docs';S.docSel=ref.id;S.newPanel=null;remember();render();})
       .catch(function(e){errbar('문서 생성 실패 '+(e&&e.code||''));});
   }
   function removeDoc(){
