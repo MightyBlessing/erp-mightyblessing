@@ -484,7 +484,7 @@
     ledEdit:null,ledDel:null,ledDraft:null,ledMonth:'',ledBank:'',ledBiz:'',
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
-    payWho:null,payYm:''};
+    payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false};
 
   var $=function(s,r){return (r||document).querySelector(s);};
   var app=$('#app');
@@ -1784,6 +1784,11 @@
       .catch(function(){ delete makingPerson[m.name]; done&&done(null); });
   }
   /* 같은 이름이 둘이면 누구인지 알 수 없다. 그럴 땐 사람이 직접 고르게 둔다. */
+  /* 명부에서 지워진 사람을 가리키는 pid 는 없는 것으로 친다.
+     안 그러면 이름은 정산표에 남아 있는데 아무 데서도 안 잡혀서,
+     그 사람이 받은 돈이 통째로 사라진 것처럼 보인다. */
+  function livePid(pid){ return (pid && S.people[pid]) ? pid : ''; }
+
   function personByName(nm){
     nm=String(nm||'').trim(); if(!nm) return null;
     var hit=peopleList().filter(function(p){ return (p.name||'').trim()===nm; });
@@ -1803,7 +1808,7 @@
     Object.keys(S.events).forEach(function(k){
       (S.events[k].members||[]).forEach(function(x){
         var n=String(x&&x.n||'').trim();
-        if(!n||x.pid) return;
+        if(!n||livePid(x.pid)) return;
         if(personByName(n)) return;      /* 이름이 이미 명부에 있으면 연결만 하면 된다 */
         m[n]=(m[n]||0)+1;
       });
@@ -1811,11 +1816,80 @@
     return Object.keys(m).sort(function(a,b){return a.localeCompare(b,'ko');})
       .map(function(n){ return {n:n, c:m[n]}; });
   }
+  /* 「최현영」과 「현영」처럼 한쪽이 다른 쪽 이름으로 끝나면 같은 사람일 때가 많다.
+     동명이인이 없다는 전제이니, 찾아만 주고 합칠지는 사람이 고른다. */
+  function sameLooking(){
+    var L=peopleList(), out=[], seen={};
+    for(var i=0;i<L.length;i++) for(var j=0;j<L.length;j++){
+      if(i===j) continue;
+      var a=L[i], b=L[j];
+      var na=(a.name||'').trim(), nb=(b.name||'').trim();
+      if(!na||!nb) continue;
+      var same = (na===nb && i<j) ||
+                 (na!==nb && na.length>nb.length && nb.length>=2 && na.slice(-nb.length)===nb);
+      if(!same) continue;
+      /* 긴 이름(성까지 있는 쪽)을 남길 쪽으로 둔다 */
+      var keep = na.length>=nb.length ? a : b, drop = keep===a ? b : a;
+      var k=keep.id+'<'+drop.id;
+      if(seen[k]||seen[drop.id+'<'+keep.id]) continue;
+      seen[k]=1;
+      out.push({keep:keep, drop:drop,
+                keepN:usedCount(keep.id,(keep.name||'').trim()),
+                dropN:usedCount(drop.id,(drop.name||'').trim())});
+    }
+    return out;
+  }
+
+  /* 두 사람을 하나로. 정산표의 이름줄을 전부 남길 쪽으로 옮기고 나서 지운다.
+     순서가 중요하다. 먼저 지우면 옮길 곳을 잃는다. */
+  function mergePeople(dropId, keepId){
+    if(!S.db||S.merging) return;
+    if(!dropId||!keepId||dropId===keepId) return errbar('합칠 두 사람을 고르세요');
+    var dp=S.people[dropId], kp=S.people[keepId];
+    if(!dp||!kp) return errbar('명부에서 찾을 수 없습니다');
+    var dn=(dp.name||'').trim(), kn=(kp.name||'').trim();
+    S.merging=true; render();
+
+    /* 1. 정산표를 전부 떠낸 뒤에 쓴다. 한 건씩 쓰면 저장소가 구독자를 깨워
+       S.events 가 통째로 갈리고, 아직 안 쓴 행사는 되돌아가 버린다. */
+    var jobs=[], moved=0;
+    Object.keys(S.events).forEach(function(k){
+      var ev=clone(S.events[k]), hit=false;
+      (ev.members||[]).forEach(function(x){
+        var isDrop = (x.pid===dropId) || (!livePid(x.pid) && String(x.n||'').trim()===dn);
+        if(!isDrop) return;
+        x.pid=keepId; x.n=kn; hit=true; moved++;
+      });
+      if(!hit) return;
+      delete ev.id; ev.updatedAt=nowISO();
+      jobs.push({k:k, body:ev});
+    });
+
+    /* 2. 남길 쪽에 비어 있는 칸은 지울 쪽에서 가져온다. 계좌번호를 잃으면 안 된다. */
+    var patch=clone(kp), need=false;
+    ['phone','taxRole','bank','acct','note','uid','email'].forEach(function(f){
+      if(!patch[f] && dp[f]){ patch[f]=dp[f]; need=true; }
+    });
+
+    var seq=Promise.resolve();
+    jobs.forEach(function(j){
+      seq=seq.then(function(){ return S.db.doc('events/'+j.k).set(j.body); });
+    });
+    if(need) seq=seq.then(function(){ patch.updatedAt=nowISO(); return S.db.doc('people/'+keepId).set(patch); });
+    seq.then(function(){ return S.db.doc('people/'+dropId).delete(); })
+       .then(function(){
+         S.merging=false; S.mergeFrom=null; S.mergeTo='';
+         flash(dn+' 을(를) '+kn+' 으로 합쳤습니다 · 정산표 '+moved+'줄을 옮겼습니다');
+         render();
+       })
+       .catch(function(e){ S.merging=false; errbar('합치기 실패 '+(e&&(e.code||e.message)||'')); render(); });
+  }
+
   function usedCount(pid,nm){
     var c=0;
     Object.keys(S.events).forEach(function(k){
       (S.events[k].members||[]).forEach(function(x){
-        if(x.pid===pid || (!x.pid && String(x.n||'').trim()===nm)) c++;
+        if(livePid(x.pid)===pid || (!livePid(x.pid) && String(x.n||'').trim()===nm)) c++;
       });
     });
     return c;
@@ -1929,7 +2003,7 @@
     Object.keys(S.events).forEach(function(k){
       var ev=clone(S.events[k]), hit=false;
       (ev.members||[]).forEach(function(x){
-        if(x.pid) return;
+        if(livePid(x.pid)) return;
         var pp=personByName(x.n);
         if(pp){ x.pid=pp.id; x.n=pp.name; hit=true; }
       });
@@ -1987,6 +2061,16 @@
   }
   function removePerson(id){
     if(!S.db)return;
+    /* 정산표에 걸려 있는 사람을 그냥 지우면 그 사람이 받은 돈이
+       아무 데서도 안 잡힌다. 「현영」을 지웠더니 월급 내역이
+       사라졌던 게 이것이다. 합치기로 보내야 한다. */
+    var pr=S.people[id]||{};
+    var n=usedCount(id,(pr.name||'').trim());
+    if(n){
+      S.personDel=null; S.mergeFrom=id; S.mergeTo=''; render();
+      return errbar((pr.name||'이 사람')+' 은(는) 정산표 '+n+'줄에 걸려 있어 그냥 지울 수 없습니다. '+
+        '같은 사람이 둘로 갈린 거라면 아래에서 합쳐주세요.');
+    }
     S.db.doc('people/'+id).delete()
       .then(function(){ S.personDel=null; flash('명부에서 지웠습니다'); render(); })
       .catch(function(e){ errbar('삭제 실패 '+(e&&e.code||'')); });
@@ -2838,7 +2922,10 @@
 
      일당과 수당을 따로 보여주는 게 핵심이다. 합계만 보면
      "왜 저 사람보다 적지" 를 설명할 수 없다. */
-  function payKeyOf(m){ return m.pid?('p:'+m.pid):('n:'+String(m.n||'').trim()); }
+  function payKeyOf(m){
+    var pid=livePid(m.pid);
+    return pid?('p:'+pid):('n:'+String(m.n||'').trim());
+  }
   function payKeyName(key){
     if(!key) return '';
     if(key.slice(0,2)==='p:') return personName(key.slice(2))||'(이름 없음)';
@@ -3051,12 +3138,13 @@
         '<td>'+(p.taxRole?esc(p.taxRole):'<span style="color:var(--zero)">—</span>')+'</td>'+
         '<td style="color:var(--muted)">'+(p.bank?esc(p.bank)+' '+esc(p.acct||''):'—')+'</td>'+
         '<td class="num">'+used+'</td>'+
-        '<td style="width:170px">'+
+        '<td style="width:250px">'+
           '<button class="btn sm" data-paywho="p:'+esc(p.id)+'">급여</button> '+
           (S.personDel===p.id
             ? '<button class="btn danger sm" data-pyes="'+esc(p.id)+'">삭제</button>'+
               '<button class="btn sm" id="pNo" style="margin-left:5px">취소</button>'
             : '<button class="btn sm" data-pedit="'+esc(p.id)+'">고치기</button>'+
+              '<button class="btn sm" data-mfrom="'+esc(p.id)+'" style="margin-left:4px">합치기</button>'+
               '<button class="del" data-pdel="'+esc(p.id)+'" aria-label="삭제" style="margin-left:4px">×</button>')+
         '</td></tr>';
     }).join('');
@@ -3084,6 +3172,8 @@
                 (S.linking?'올리는 중…':mn.length+'명 명부에 올리기')+'</button></div>'+
           '</div>'
         : '')+
+      sameBox()+
+      mergeBox()+
       form+
       '<div class="actions" style="margin-bottom:14px">'+
         '<button class="btn primary" id="pNew"'+(writable()?'':' disabled')+'>+ 새 사람</button>'+
@@ -3101,6 +3191,53 @@
     var qb=$('#pQ');
     if(qb) qb.addEventListener('input',function(){ S.peopleQ=qb.value; renderPeople(); $('#pQ').focus(); });
   }
+  /* 같은 사람으로 보이는 짝을 먼저 보여준다. 합칠지는 사람이 고른다. */
+  function sameBox(){
+    var L=sameLooking(); if(!L.length) return '';
+    return '<div class="note n-warn" style="margin:0 0 14px">'+
+      '<b>같은 사람으로 보이는 짝이 '+L.length+'개</b> 있습니다. '+
+      '동명이인이 없다면 합쳐주세요. 합치면 정산표에 적힌 이름줄이 모두 남길 쪽으로 옮겨집니다.'+
+      '<div class="scroll" style="margin-top:10px"><table><thead><tr>'+
+        '<th>남길 사람</th><th>합칠 사람</th><th></th></tr></thead><tbody>'+
+      L.map(function(x){
+        return '<tr>'+
+          '<td><b>'+esc(x.keep.name||'')+'</b>'+
+            '<div style="font-size:12px;color:var(--muted)">정산표 '+x.keepN+'줄'+
+            (x.keep.uid?' · 구성원':'')+'</div></td>'+
+          '<td>'+esc(x.drop.name||'')+
+            '<div style="font-size:12px;color:var(--muted)">정산표 '+x.dropN+'줄'+
+            (x.drop.uid?' · 구성원':'')+'</div></td>'+
+          '<td style="width:120px"><button class="btn sm" data-mgo="'+esc(x.drop.id)+'|'+esc(x.keep.id)+'"'+
+            (S.merging?' disabled':'')+'>합치기</button></td>'+
+        '</tr>';
+      }).join('')+'</tbody></table></div>'+
+    '</div>';
+  }
+
+  /* 직접 고르는 합치기. 추천에 안 걸린 짝(이름이 아예 다른 경우)을 위해 둔다. */
+  function mergeBox(){
+    if(!S.mergeFrom) return '';
+    var dp=S.people[S.mergeFrom]; if(!dp) return '';
+    var dn=(dp.name||'').trim();
+    var others=peopleList().filter(function(x){ return x.id!==S.mergeFrom; });
+    return '<section class="card" style="margin-bottom:14px"><h2>'+esc(dn)+' 합치기</h2>'+
+      '<p class="hint" style="margin:0 0 12px"><b>'+esc(dn)+'</b> 의 정산표 '+
+        usedCount(S.mergeFrom,dn)+'줄을 아래에서 고른 사람에게 모두 옮기고, '+
+        '<b>'+esc(dn)+'</b> 은(는) 명부에서 지웁니다. 받은 돈 기록은 그대로 따라갑니다.</p>'+
+      '<div class="field"><label for="mgTo">누구로 합칠까요</label>'+
+        '<select id="mgTo"><option value="">— 고르세요 —</option>'+
+        others.map(function(x){
+          return '<option value="'+esc(x.id)+'"'+(S.mergeTo===x.id?' selected':'')+'>'+
+            esc(x.name||'(이름 없음)')+' · 정산표 '+usedCount(x.id,(x.name||'').trim())+'줄'+
+            (x.uid?' · 구성원':'')+'</option>';
+        }).join('')+'</select></div>'+
+      '<div class="actions">'+
+        '<button class="btn primary" id="mgYes"'+(S.merging||!S.mergeTo?' disabled':'')+'>'+
+          (S.merging?'합치는 중…':'합치기')+'</button>'+
+        '<button class="btn" id="mgNo">취소</button></div>'+
+    '</section>';
+  }
+
   function settleTabs(){
     return '<div class="tabs" style="margin:0 0 14px">'+
       [['events','행사'],['people','인력']].map(function(x){
@@ -4174,8 +4311,8 @@
       else { S.view='settle'; S.sel=g.slice(3); }
       remember(); render(); return;
     }
-    if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; render(); goTop(); return; }
-    if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; render(); goTop(); return; }
+    if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; remember(); render(); goTop(); return; }
+    if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; remember(); render(); goTop(); return; }
     if((el=t.closest('[data-aby]'))){  S.acctBy=el.dataset.aby;  render(); goTop(); return; }
     if((el=t.closest('[data-amain]'))){
       S.acctMain=el.dataset.amain; S.ledEdit=null; S.bankEdit=null; S.ledDraft=null;
@@ -4264,13 +4401,20 @@
     }
     if(t.id==='ldSave') return saveLedForm();
 
-    if((el=t.closest('[data-stab]'))){ S.payWho=null; S.payYm=''; S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); goTop(); return; }
+    if((el=t.closest('[data-stab]'))){ S.payWho=null; S.payYm=''; S.mergeFrom=null; S.mergeTo=''; S.setTab=el.dataset.stab; S.sel=null; S.personEdit=null; remember(); render(); goTop(); return; }
     if(t.id==='pNew'){ S.personEdit='new'; render(); return; }
     if(t.id==='pCancel'||t.id==='pfCancel'){ S.personEdit=null; render(); return; }
     if((el=t.closest('[data-pedit]'))){ S.personEdit=el.dataset.pedit; render(); return; }
     if((el=t.closest('[data-pdel]'))){ S.personDel=el.dataset.pdel; render(); return; }
     if(t.id==='pNo'){ S.personDel=null; render(); return; }
     if((el=t.closest('[data-pyes]'))) return removePerson(el.dataset.pyes);
+    if((el=t.closest('[data-mfrom]'))){ S.mergeFrom=el.dataset.mfrom; S.mergeTo=''; S.personEdit=null; render(); return; }
+    if(t.id==='mgNo'){ S.mergeFrom=null; S.mergeTo=''; render(); return; }
+    if(t.id==='mgYes'){ return mergePeople(S.mergeFrom, S.mergeTo); }
+    if((el=t.closest('[data-mgo]'))){
+      var pr=String(el.dataset.mgo).split('|');
+      return mergePeople(pr[0], pr[1]);
+    }
     if(t.id==='pRegAll') return registerAll();
     if(t.id==='pMemAll') return registerMembers();
     if(t.id==='pLink')   return linkAll();
@@ -4408,6 +4552,7 @@
       if(t.dataset&&t.dataset.ovv!==undefined){ dc.ov[+t.dataset.ovv].v=t.value; touch('doc',dc.id); return; }
     }
     if(t.id==='invMail'){ S.inviteMail=t.value; return; }
+    if(t.id==='mgTo'){ S.mergeTo=t.value; pickRender('mgTo'); return; }
     if(t.id==='payYm'){ S.payYm=t.value; pickRender('payYm'); return; }
     if(t.id==='adPayOn'){ S.advOn=t.value; return; }
     if(t.id==='adPayBank'){ S.advBank=t.value; return; }
@@ -4743,7 +4888,46 @@
     try{ window.scrollTo(0,0); }catch(e){}
   }
 
-  function remember(){try{localStorage.setItem('mb-erp-nav',JSON.stringify({v:S.view,s:S.sel,d:S.docSel}));}catch(e){}}
+  /* ─── 뒤로가기 ───
+     화면 하나짜리 앱이라 탭을 옮겨도 브라우저가 보기엔 아무 데도 안 갔다.
+     그래서 뒤로가기를 누르면 앱 안에서 한 칸 돌아가는 게 아니라 통째로
+     밖으로 나가 버렸다. 화면을 옮길 때마다 발자국을 하나씩 남긴다. */
+  function navSnap(){
+    return {v:S.view, sel:S.sel, doc:S.docSel, setTab:S.setTab, docTab:S.docTab,
+            acctMain:S.acctMain, acctTab:S.acctTab, repTab:S.repTab, payWho:S.payWho};
+  }
+  var histKey=null;
+  function syncHistory(){
+    try{
+      var snap=navSnap(), key=JSON.stringify(snap);
+      if(key===histKey) return;          /* 같은 자리면 발자국을 안 남긴다 */
+      if(histKey===null){ histKey=key; history.replaceState({mb:snap},''); return; }
+      histKey=key; history.pushState({mb:snap},'');
+    }catch(e){}
+  }
+  function applyNav(snap){
+    S.view=snap.v; S.sel=snap.sel; S.docSel=snap.doc;
+    S.setTab=snap.setTab; S.docTab=snap.docTab;
+    S.acctMain=snap.acctMain; S.acctTab=snap.acctTab;
+    S.repTab=snap.repTab; S.payWho=snap.payWho;
+    /* 돌아간 자리에서 반쯤 열려 있던 것들은 닫는다 */
+    S.ledEdit=null; S.ledDraft=null; S.bankEdit=null; S.personEdit=null;
+    S.advEdit=null; S.advDraft=null; S.advPay=null; S.newPanel=null;
+    S.confirmDel=null; S.confirmDocDel=null; S.confirmPay=null;
+    histKey=JSON.stringify(navSnap());
+    try{localStorage.setItem('mb-erp-nav',JSON.stringify({v:S.view,s:S.sel,d:S.docSel}));}catch(e){}
+    render(); goTop();
+  }
+  window.addEventListener('popstate',function(e){
+    var snap=e&&e.state&&e.state.mb;
+    if(!snap) return;                    /* 우리가 남긴 게 아니면 브라우저에 맡긴다 */
+    applyNav(snap);
+  });
+
+  function remember(){
+    try{localStorage.setItem('mb-erp-nav',JSON.stringify({v:S.view,s:S.sel,d:S.docSel}));}catch(e){}
+    syncHistory();
+  }
 
   var resolving=false;
   function resolveNames(){
@@ -5207,6 +5391,7 @@
     try{var s=JSON.parse(localStorage.getItem('mb-erp-nav')||'{}');
       if(s.v)S.view=s.v; if(s.s)S.sel=s.s; if(s.d)S.docSel=s.d;}catch(e){}
     renderNav();
+    syncHistory();
     if(sbConfigured()) return startSupabase();
     var tries=0;
     (function wait(){
