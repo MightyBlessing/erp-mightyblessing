@@ -1165,7 +1165,16 @@
       payee:'', payeeBank:'', payeeAcct:'', dueDate:'', note:'',
       items:[{name:'',qty:1,price:0,note:''}],
       pay:{state:'pending',at:'',by:'',memo:''},
-      steps:firstStep(), status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+      steps:expenseSteps(), status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+  }
+  /* 돈이 나가는 문서는 회계가 한 번 보는 게 기본이다. 매번 손으로 넣게 하면
+     바쁜 날에 빠지고, 빠진 줄도 모른 채 결재가 끝난다.
+     회계 역할이 없거나 내가 회계면 나 혼자다. 필요 없으면 지울 수 있다. */
+  function expenseSteps(){
+    var L=firstStep();
+    var acc=accountingUids()[0];
+    if(acc&&acc!==S.me.id) L.push({uid:acc,role:'coop',state:'pending',comment:'',at:''});
+    return L;
   }
   function newDocBody(form,scope){
     var f=FORMS[form]||FORMS.rent;

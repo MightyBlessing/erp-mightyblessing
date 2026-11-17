@@ -16,7 +16,15 @@
 //   APP_BASE_URL             알림 링크에 쓸 ERP 주소
 //   CRON_SECRET              예약 알림을 부를 때 쓰는 암호
 //   SLACK_SIGNING_SECRET     /지출 이 슬랙에서 온 게 맞는지 보는 열쇠
-//   SLACK_BOT_TOKEN          채널 목록을 읽을 때만 쓴다 (xoxb-…)
+//   SLACK_BOT_TOKEN          채널 목록·영수증·사람 조회 (xoxb-…)
+//
+// 슬랙 앱 봇 스코프
+//   channels:read groups:read            채널 목록
+//   channels:history groups:history      영수증 글을 보기 위해
+//   files:read                           영수증 내려받기
+//   users:read users:read.email          올린 사람 ↔ ERP 계정 맞추기
+//   chat:write                           스레드 답장
+// 스코프를 바꾸면 반드시 Reinstall. 봇을 그 채널에 초대해야 글이 보인다.
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY   (대시보드가 자동으로 넣어준다)
 
 const J = (b: unknown, s = 200) =>
@@ -393,6 +401,210 @@ async function slackChannels() {
   return { ok: true, rows };
 }
 
+/* ───────── 영수증을 올리면 지출결의서가 된다 ─────────
+   슬래시 명령에는 파일을 붙일 수 없다. 슬랙이 그렇게 생겼다.
+   그래서 사진을 올리면서 설명란에 「지출 교촌치킨 52000 스태프 야식」
+   이라고 적게 한다. 손이 가는 건 같고 영수증이 같이 온다.
+
+   영수증은 찍은 그 자리에서 붙어야 한다. 나중에 붙이려면 사진첩을
+   뒤져야 하고, 그러면 안 붙는다. */
+
+const SLACK = "https://slack.com/api/";
+async function slackApi(method: string, q: Record<string, string> = {}) {
+  const tok = env("SLACK_BOT_TOKEN");
+  if (!tok) return { ok: false, error: "no_bot_token" } as any;
+  const u = new URL(SLACK + method);
+  for (const k of Object.keys(q)) u.searchParams.set(k, q[k]);
+  const r = await fetch(u, { headers: { authorization: `Bearer ${tok}` } });
+  return await r.json().catch(() => ({ ok: false, error: "bad_json" }));
+}
+async function slackPostMessage(channel: string, text: string, thread?: string) {
+  const tok = env("SLACK_BOT_TOKEN");
+  if (!tok) return;
+  await fetch(SLACK + "chat.postMessage", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tok}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    body: JSON.stringify({ channel, text, thread_ts: thread }),
+  }).catch(() => {});
+}
+
+/* 슬랙 사람 → ERP 계정. 이메일로 맞춘다. 이름은 같은 사람이 여러 꼴로
+   적혀 있어서 못 믿는다. */
+async function erpUidOf(slackUser: string) {
+  if (!slackUser) return null;
+  const info: any = await slackApi("users.info", { user: slackUser });
+  const mail = String(info?.user?.profile?.email || "").trim().toLowerCase();
+  if (!mail) return null;
+  const r = await fetch(
+    `${env("SUPABASE_URL")}/rest/v1/members?select=uid,email,name&email=eq.${
+      encodeURIComponent(mail)
+    }`,
+    {
+      headers: {
+        apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+        authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+    },
+  );
+  if (!r.ok) return null;
+  const rows = await r.json().catch(() => []);
+  return rows?.[0] ? { uid: String(rows[0].uid), name: String(rows[0].name || "") } : null;
+}
+
+/* 회계 역할인 사람. config/roles 문서에 담겨 있다. */
+async function accountingUid() {
+  try {
+    const rows = await docs("config");
+    const map = (rows.find((r) => r.id === "roles")?.data as any)?.map || {};
+    for (const uid of Object.keys(map)) if (map[uid] === "accounting") return uid;
+  } catch { /* 역할을 못 읽어도 초안은 만들어야 한다 */ }
+  return "";
+}
+
+/* 영수증을 보관함에 옮긴다. 슬랙 파일은 토큰이 있어야 열리므로
+   ERP 에서 바로 보여줄 수 없다. 우리 쪽으로 복사해 둔다. */
+async function copyReceipt(file: any, docId: string) {
+  const url = file?.url_private_download || file?.url_private;
+  if (!url) return null;
+  const tok = env("SLACK_BOT_TOKEN");
+  const r = await fetch(url, { headers: { authorization: `Bearer ${tok}` } });
+  if (!r.ok) return null;
+  const buf = new Uint8Array(await r.arrayBuffer());
+  if (!buf.length || buf.length > 15 * 1024 * 1024) return null;
+  const type = String(file.mimetype || "application/octet-stream");
+  const ext = String(file.filetype || "bin").toLowerCase().replace(/[^a-z0-9]/g, "")
+    .slice(0, 5) || "bin";
+  const path = `${docId}/${Date.now().toString(36)}${
+    Math.random().toString(36).slice(2, 8)
+  }.${ext}`;
+  const up = await fetch(
+    `${env("SUPABASE_URL")}/storage/v1/object/evidence/${path}`,
+    {
+      method: "POST",
+      headers: {
+        apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+        authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+        "content-type": type,
+      },
+      body: buf,
+    },
+  );
+  if (!up.ok) return null;
+  return {
+    p: path,
+    n: String(file.name || "영수증"),
+    t: type,
+    s: buf.length,
+    by: "",
+    at: new Date().toISOString(),
+  };
+}
+
+/* 슬랙은 답이 늦으면 같은 사건을 다시 보낸다. 그대로 두면 지출결의서가
+   두 장, 세 장 생긴다. 이미 만든 사건인지 먼저 본다. */
+function alreadyMade(rows: { data: Record<string, any> }[], eventId: string) {
+  return rows.some((r) => (r.data as any)?.fromSlack?.eventId === eventId);
+}
+
+async function receiptToExpense(ev: any, eventId: string) {
+  const text = String(ev.text || "").replace(/^\s*\/?지출\s*/, "");
+  const got = parseExpense(text);
+  if (!got || !got.payee) {
+    await slackPostMessage(
+      ev.channel,
+      "금액을 못 읽었습니다. 설명을 `지출 교촌치킨 52000 스태프 야식` 처럼 적어주세요.",
+      ev.thread_ts || ev.ts,
+    );
+    return;
+  }
+
+  const rows = await docs("docs");
+  if (alreadyMade(rows, eventId)) return;
+
+  const me = await erpUidOf(String(ev.user || ""));
+  const acc = await accountingUid();
+  /* 사건에는 채널 번호만 온다. 행사에는 「#이름」으로 적어 두므로
+     이름을 한 번 물어본다. */
+  const info: any = await slackApi("conversations.info", { channel: String(ev.channel || "") });
+  const chName = String(info?.channel?.name || "");
+  const evt = await eventOfChannel(String(ev.channel || ""), chName);
+  const now = new Date().toISOString();
+  const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
+
+  /* 기안자 본인이 1차, 회계가 협조. 올린 사람을 못 찾으면 결재선을
+     비워 둔다 — 남의 이름으로 결재선을 세울 수는 없다. */
+  const steps: any[] = [];
+  if (me) steps.push({ uid: me.uid, state: "pending", comment: "", at: "" });
+  if (acc && acc !== me?.uid) {
+    steps.push({ uid: acc, role: "coop", state: "pending", comment: "", at: "" });
+  }
+
+  const files: any[] = [];
+  for (const f of (ev.files || []).slice(0, 3)) {
+    const m = await copyReceipt(f, id);
+    if (m) { m.by = me?.uid || ""; files.push(m); }
+  }
+
+  const body = {
+    type: "expense",
+    title: "지출결의서",
+    no: nextExpenseNo(rows),
+    date: todayKST(),
+    eventId: evt?.id || "",
+    account: "기타",
+    method: "bank",
+    payee: got.payee,
+    payeeBank: "",
+    payeeAcct: "",
+    dueDate: "",
+    note: got.what || "",
+    items: [{ name: got.what || got.payee, qty: 1, price: got.amt, note: "" }],
+    pay: { state: "pending", at: "", by: "", memo: "" },
+    files,
+    steps,
+    /* 결재선이 선 것만 올린다. 결재선 없는 「상신」은 아무 데도 못 가는
+       문서를 만드는 일이다. */
+    status: steps.length ? "submitted" : "draft",
+    drafter: me?.uid || "",
+    fromSlack: { user: String(ev.user || ""), eventId, at: now },
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  const r = await fetch(`${env("SUPABASE_URL")}/rest/v1/docs`, {
+    method: "POST",
+    headers: {
+      apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+      authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      "content-type": "application/json",
+      prefer: "return=minimal",
+    },
+    body: JSON.stringify({ collection: "docs", id, data: body, updated_at: now }),
+  });
+  if (!r.ok) {
+    await slackPostMessage(ev.channel, `지출결의서를 못 만들었습니다 (${r.status})`,
+      ev.thread_ts || ev.ts);
+    return;
+  }
+
+  const L = [
+    `:memo: *지출결의서* — ${got.payee} ${won(got.amt)}`,
+    got.what || "",
+    evt ? `*행사* ${evt.name}` : "",
+    files.length ? `*영수증* ${files.length}장 붙였습니다` : "*영수증* 못 가져왔습니다",
+    me
+      ? (steps.length > 1
+        ? `*결재선* ${me.name} (기안) → 회계 (협조)`
+        : `*결재선* ${me.name} (기안)`)
+      : "_올리신 분을 ERP 계정과 맞추지 못했습니다. 열어서 본인 것으로 만들어 주세요._",
+    `:arrow_upper_right: <${base()}#docs/${id}|ERP에서 열기>`,
+  ].filter(Boolean);
+  await slackPostMessage(ev.channel, L.join("\n"), ev.thread_ts || ev.ts);
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -412,9 +624,44 @@ Deno.serve(async (req) => {
       return await slash(raw);
     }
 
-    const body = req.method === "POST"
-      ? await req.json().catch(() => ({}))
-      : {};
+    const raw = req.method === "POST" ? await req.text() : "";
+    let body: any = {};
+    try { body = raw ? JSON.parse(raw) : {}; } catch { body = {}; }
+
+    /* 슬랙 사건(영수증 올리기)도 JSON 으로 온다. action 이 아니라 type 으로
+       알아본다. 서명이 맞아야만 손댄다 — 문지기를 꺼 뒀으므로 이게 전부다. */
+    if (body.type === "url_verification" || body.type === "event_callback") {
+      const ok = await slackSigned(
+        raw,
+        req.headers.get("x-slack-request-timestamp") || "",
+        req.headers.get("x-slack-signature") || "",
+      );
+      if (!ok) return J({ ok: false, error: "서명이 맞지 않습니다" }, 401);
+      if (body.type === "url_verification") {
+        return new Response(String(body.challenge || ""), {
+          headers: { "content-type": "text/plain", ...CORS },
+        });
+      }
+      const ev = body.event || {};
+      const mine = ev.type === "message" &&
+        !ev.bot_id && ev.subtype !== "message_changed" &&
+        (ev.files || []).length > 0 &&
+        /^\s*\/?지출\b/.test(String(ev.text || ""));
+      /* 슬랙은 3초 안에 200 을 못 받으면 같은 사건을 다시 보낸다.
+         먼저 200 을 주고 뒤에서 일한다. 중복은 event_id 로 거른다. */
+      if (mine) {
+        const id = String(body.event_id || ev.ts || "");
+        const job = receiptToExpense(ev, id).catch(() => {});
+        /* 응답을 보내고 나면 보통 그 자리에서 일이 끊긴다. waitUntil 이
+           「끝까지 돌려 달라」는 뜻이다. 없는 환경이면 그냥 기다린다 —
+           느려서 슬랙이 한 번 더 보내더라도 event_id 로 걸러진다. */
+        const rt = (globalThis as any).EdgeRuntime;
+        if (rt?.waitUntil) rt.waitUntil(job);
+        else await job;
+      }
+      return J({ ok: true });
+    }
+
     const action = body.action || url.searchParams.get("action") || "notify";
 
     if (action === "digest") {
