@@ -437,7 +437,8 @@
            {k:'roles',t:'사용자·권한'},{k:'conf',t:'시스템 설정'}];
   var DOC_KIND={official:'공문',expense:'지출결의서',
     purchase:'구매품의서', goods:'물품구매 신청서',
-    trip:'출장신청서', leave:'휴가신청서', general:'일반 품의서'};
+    trip:'출장신청서', general:'일반 품의서',
+    leave:'휴가신청서'};   /* 더는 만들지 않는다. 옛 문서 이름을 보여주려고 남긴다 */
 
   /* ─── 신청서 서식 ───
      결재 틀(결재선·승인·반려·이력)은 공문·지출결의서와 똑같이 쓰고,
@@ -475,15 +476,6 @@
       {k:'why',    l:'출장 목적',     t:'a', r:1},
       {k:'note',   l:'비고',        t:'a'}
     ]},
-    leave:{ days:1, f:[
-      {k:'kind',   l:'휴가 종류',     t:'s', r:1,
-       o:function(){return ['연차','반차(오전)','반차(오후)','병가','경조사','공가','무급','기타'];}},
-      {k:'from',   l:'시작일',       t:'d', r:1},
-      {k:'to',     l:'종료일',       t:'d', r:1},
-      {k:'why',    l:'사유',        t:'a'},
-      {k:'backup', l:'업무 인계자',    t:'t', ph:'자리를 비우는 동안 맡아줄 사람'},
-      {k:'tel',    l:'비상 연락처',    t:'t'}
-    ]},
     general:{ f:[
       {k:'why',    l:'품의 내용',     t:'a', r:1, ph:'무엇을 하려는지'},
       {k:'effect', l:'기대 효과',     t:'a'},
@@ -492,7 +484,21 @@
       {k:'note',   l:'비고',        t:'a'}
     ]}
   };
-  function isApply(d){ return !!(d&&APPLY[d.type]); }
+  /* 휴가는 쓰지 않기로 했다. 새로 만들 수는 없지만, 시험 삼아 만들어 둔
+     문서가 열리지도 않으면 지울 수도 없다. 그려주기만 한다. */
+  var APPLY_OLD={
+    leave:{ days:1, f:[
+      {k:'kind',   l:'휴가 종류',     t:'s', r:1,
+       o:function(){return ['연차','반차(오전)','반차(오후)','병가','경조사','공가','무급','기타'];}},
+      {k:'from',   l:'시작일',       t:'d', r:1},
+      {k:'to',     l:'종료일',       t:'d', r:1},
+      {k:'why',    l:'사유',        t:'a'},
+      {k:'backup', l:'업무 인계자',    t:'t', ph:'자리를 비우는 동안 맡아줄 사람'},
+      {k:'tel',    l:'비상 연락처',    t:'t'}
+    ]}
+  };
+  function applySchema(t){ return APPLY[t]||APPLY_OLD[t]||null; }
+  function isApply(d){ return !!(d&&applySchema(d.type)); }
   /* 휴가 일수. 반차는 0.5일로 센다. */
   function leaveDays(d){
     if(!d||!d.from||!d.to) return 0;
@@ -904,7 +910,7 @@
       if(d.type==='expense'){
         rows.push(['금액', won(expTotal(d))+(d.payee?(' · 받는 사람 '+d.payee):'')]);
       } else if(isApply(d)){
-        var A=APPLY[d.type]||{};
+        var A=applySchema(d.type)||{};
         if(A.days) rows.push(['기간', (d.from||'')+' ~ '+(d.to||'')+' · '+leaveDays(d)+'일'+(d.kind?(' · '+d.kind):'')]);
         else if(A.sum&&num(d[A.sum],0)>0) rows.push(['예상 금액', won(num(d[A.sum],0))]);
       } else if(d.type==='official'){
@@ -1127,7 +1133,7 @@
       payee:'', payeeBank:'', payeeAcct:'', dueDate:'', note:'',
       items:[{name:'',qty:1,price:0,note:''}],
       pay:{state:'pending',at:'',by:'',memo:''},
-      steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+      steps:firstStep(), status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
   }
   function newDocBody(form,scope){
     var f=FORMS[form]||FORMS.rent;
@@ -1144,15 +1150,22 @@
       /* 연락처는 비워 둔다 — 저장소가 공개라 코드에 번호를 박지 않는다.
          한 번 입력하면 그 문서에 저장되고, 복사해서 새 문서를 만들면 따라온다. */
       addr:'', tel1:'', tel2:'', email:'contact@mightyblessing.com',
-      line:[], steps:[], status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+      line:[], steps:firstStep(), status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
+  }
+
+  /* 올리는 사람이 1차 결재자다. 자기가 쓴 걸 자기가 확인하고 넘기는 게
+     실제 순서이고, 매번 첫 줄에 자기 이름을 찾아 넣는 건 군더더기다.
+     필요 없으면 지울 수 있게만 해 둔다. */
+  function firstStep(){
+    return S.me.id ? [{uid:S.me.id, state:'pending', comment:'', at:''}] : [];
   }
 
   function newApplyBody(kind){
     var body={type:kind, title:DOC_KIND[kind]||'신청서',
       no:nextNo(kind), date:today(),
-      line:[], steps:[], status:'draft',
+      line:[], steps:firstStep(), status:'draft',
       drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
-    (APPLY[kind].f||[]).forEach(function(f){ body[f.k]=''; });
+    (applySchema(kind).f||[]).forEach(function(f){ body[f.k]=''; });
     if(kind==='leave'){ body.from=today(); body.to=today(); body.kind='연차'; }
     if(kind==='trip'){ body.from=today(); body.to=today(); }
     return body;
@@ -1284,76 +1297,183 @@
   }
 
   /* ---- 대시보드 ---- */
-  function renderDash(){
-    var evs=Object.keys(S.events).map(function(k){return S.events[k];});
-    var paid=evs.filter(function(e){return progress(e).status==='paid';});
-    var inflight=evs.filter(function(e){return progress(e).status==='submitted';});
-    var totalPay=paid.reduce(function(a,e){return a+compute(e).payTotal;},0);
-    var todo=docList('todo'), prog=docList('progress');
+  /* ─── 대시보드 ───
+     업무 진행률은 슬랙이 보여준다. 여기는 돈이다.
+     아침에 열었을 때 「지금 돈이 어떻게 돼 있나」가 한 화면에 들어와야 한다. */
 
-    var byMonth={};
-    paid.forEach(function(e){var m=(e.date||'').slice(0,7); if(m)byMonth[m]=(byMonth[m]||0)+compute(e).payTotal;});
-    var months=Object.keys(byMonth).sort().slice(-6);
-    var max=months.reduce(function(a,m){return Math.max(a,byMonth[m]);},0)||1;
-    var chart = months.length
-      ? '<div style="display:flex;align-items:flex-end;gap:12px;height:132px;padding-top:6px">'+
-        months.map(function(m){
-          var h=Math.max(4,Math.round(byMonth[m]/max*108));
-          return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:6px">'+
-            '<span style="font-family:var(--font-num);font-size:11px;color:var(--muted)">'+Math.round(byMonth[m]/10000)+'만</span>'+
-            '<div style="width:100%;max-width:46px;height:'+h+'px;background:var(--accent);border-radius:4px 4px 0 0"></div>'+
-            '<span style="font-size:11px;color:var(--muted)">'+m.slice(5)+'월</span></div>';
-        }).join('')+'</div>'
-      : '<div class="empty" style="padding:24px 8px">지급 완료된 정산이 아직 없습니다.</div>';
+  /* 그 달에 오간 돈. 통장 사이 이동은 회사 밖으로 나간 게 아니라 뺀다. */
+  function ledMonth(ym){
+    var inn=0,out=0,n=0;
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{};
+      if(r.dir==='move') return;
+      if(String(r.on||'').slice(0,7)!==ym) return;
+      var a=num(r.amt,0); n++;
+      if(r.dir==='in') inn+=a; else out+=a;
+    });
+    return {inn:inn, out:out, n:n};
+  }
+  function cashTotal(){
+    return bankList().reduce(function(a,b){ return a+bankBal(b.id); },0);
+  }
+  /* 아직 안 나간 돈 — 승인됐는데 미지급 + 돌려주지 않은 대신결제 */
+  function unpaidAll(){
+    var docs=Object.keys(S.docs).map(function(k){var d=clone(S.docs[k]); d.id=k; return d;})
+      .filter(function(d){ return d&&d.type==='expense'&&docStatus(d)==='approved'&&payState(d)!=='paid'; });
+    var sum=docs.reduce(function(a,d){ return a+expTotal(d); },0);
+    var adv=advOpen(), advSum2=advSum(adv);
+    var late=docs.filter(payLate);
+    return {docs:docs, sum:sum, adv:adv, advSum:advSum2, late:late, total:sum+advSum2};
+  }
+  /* 아직 안 들어온 돈 */
+  function dueAll(){
+    var rows=[], sum=0;
+    Object.keys(S.events).forEach(function(k){
+      var ev=clone(S.events[k]); ev.id=k;
+      var d=rcvDue(ev);
+      if(d>0){ rows.push({ev:ev, due:d}); sum+=d; }
+    });
+    rows.sort(function(a,b){ return b.due-a.due; });
+    return {rows:rows, sum:sum};
+  }
+
+  function renderDash(){
+    var ym=today().slice(0,7);
+    var m=ledMonth(ym), cash=cashTotal();
+    var up=unpaidAll(), due=dueAll();
+    var todo=docList('todo'), prog=docList('progress');
+    var evs=Object.keys(S.events).map(function(k){var e=clone(S.events[k]); e.id=k; return e;});
+    var running=evs.filter(function(e){ return progress(e).status!=='paid'; });
+
+    /* 최근 6개월 수입·지출 */
+    var months=[];
+    for(var i=5;i>=0;i--){
+      var d=new Date(); d.setDate(1); d.setMonth(d.getMonth()-i);
+      months.push(d.getFullYear()+'-'+pad2(d.getMonth()+1));
+    }
+    var md=months.map(function(x){ var g=ledMonth(x); g.ym=x; return g; });
+    var mx=md.reduce(function(a,g){ return Math.max(a,g.inn,g.out); },0)||1;
+    var chart = md.some(function(g){return g.n;})
+      ? '<div style="display:flex;align-items:flex-end;gap:10px;height:170px;padding-top:6px">'+
+        md.map(function(g){
+          var hi=Math.max(2,Math.round(g.inn/mx*120)), ho=Math.max(2,Math.round(g.out/mx*120));
+          return '<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px">'+
+            '<div style="display:flex;align-items:flex-end;gap:3px;height:124px">'+
+              '<div title="수입 '+won(g.inn)+'" style="width:13px;height:'+hi+'px;background:var(--accent);border-radius:3px 3px 0 0"></div>'+
+              '<div title="지출 '+won(g.out)+'" style="width:13px;height:'+ho+'px;background:var(--bad);border-radius:3px 3px 0 0;opacity:.75"></div>'+
+            '</div>'+
+            '<span style="font-size:11px;color:var(--muted)">'+(+g.ym.slice(5))+'월</span>'+
+            '<span style="font-family:var(--font-num);font-size:10.5px;color:var(--muted)">'+
+              (g.inn-g.out>=0?'+':'−')+Math.abs(Math.round((g.inn-g.out)/10000))+'만</span>'+
+          '</div>';
+        }).join('')+'</div>'+
+        '<p class="hint" style="margin:10px 0 0">'+
+          '<span style="color:var(--accent)">■</span> 수입 &nbsp; '+
+          '<span style="color:var(--bad)">■</span> 지출 &nbsp;·&nbsp; 아래 숫자는 그 달 남은 돈입니다. 통장 사이 이동은 뺐습니다.</p>'
+      : '<div class="empty" style="padding:26px 8px">장부에 거래가 아직 없습니다.<br>회계·재무 → 장부에서 넣거나, 지출결의서를 지급 처리하면 모입니다.</div>';
 
     var recent=[];
     Object.keys(S.docs).forEach(function(k){var d=S.docs[k];
-      recent.push({at:d.updatedAt,t:'전자결재',n:d.title||'(제목 없음)',s:docStatus(d),l:DOC_STATUS[docStatus(d)],
+      recent.push({at:d.updatedAt,t:DOC_KIND[d.type]||'문서',n:d.title||'(제목 없음)',s:docStatus(d),l:DOC_STATUS[docStatus(d)],
                    w:ownerCell('doc',d),go:'doc:'+k});});
     evs.forEach(function(e){
       recent.push({at:e.updatedAt,t:'정산',n:e.name||'(이름 없음)',s:progress(e).status,l:SET_STATUS[progress(e).status],
                    w:ownerCell('ev',e),go:'ev:'+e.id});});
+    Object.keys(S.ledger).forEach(function(k){
+      var r=S.ledger[k]||{};
+      if(!r.src) return;          /* 손으로 넣은 줄은 문서 쪽에서 이미 보인다 */
+      recent.push({at:r.updatedAt,t:'회계',n:(r.memo||r.item||'거래')+' · '+(r.dir==='in'?'+':'−')+won(num(r.amt,0)),
+                   s:'approved',l:'장부',w:'',go:'acct:book'});
+    });
     recent.sort(function(a,b){return (b.at||'')<(a.at||'')?-1:1;});
-    recent=recent.slice(0,8);
+    recent=recent.slice(0,10);
 
     app.innerHTML=
       '<div class="stack">'+
       (S.stale?'<div class="note n-warn">데이터를 아직 불러오지 못했습니다. 보이는 내용이 최신이 아닐 수 있습니다.</div>':'')+
+      (up.late.length
+        ? '<div class="note n-bad"><b>지급 예정일이 지난 건이 '+up.late.length+'건</b> 있습니다 — '+
+          won(up.late.reduce(function(a,d){return a+expTotal(d);},0))+
+          '<div class="actions" style="margin-top:10px"><button class="btn sm" data-go="acct:spend">지출 현황 보기</button></div></div>'
+        : '')+
+
       '<div class="tiles">'+
-        tile('내 결재 대기', todo.length+'건', todo.length?'지금 처리해야 합니다':'처리할 문서 없음', todo.length>0)+
-        tile('진행 중 문서', prog.length+'건', '결재 중')+
-        tile('지급 완료 사례비', won(totalPay), paid.length+'개 행사 누계')+
-        tile('정산 진행 중', inflight.length+'건', '결재 대기')+
-        (function(){
-          var xs=Object.keys(S.docs).map(function(k){return S.docs[k];})
-            .filter(function(d){return d&&d.type==='expense'&&docStatus(d)==='approved'&&payState(d)!=='paid';});
-          var v=xs.reduce(function(a,d){return a+expTotal(d);},0);
-          return tile('지급 대기 지출', won(v), xs.length+'건 · 승인 후 미지급', xs.length>0);
-        })()+
+        tile('이번 달 수입', won(m.inn), ym+' 기준')+
+        tile('이번 달 지출', won(m.out), ym+' 기준')+
+        tile('이번 달 남은 돈', won(m.inn-m.out), m.inn-m.out<0?'나간 돈이 더 많습니다':'', m.inn-m.out<0)+
+        tile('현재 자금', won(cash), bankList().length+'개 통장 합계', cash<0)+
       '</div>'+
+      '<div class="tiles">'+
+        tile('줘야 할 돈', won(up.total),
+             up.docs.length+'건 결재분'+(up.adv.length?(' · 대신결제 '+up.adv.length+'건'):''), up.total>0)+
+        tile('받아야 할 돈', won(due.sum), due.rows.length+'개 행사', due.sum>0)+
+        tile('내 결재 대기', todo.length+'건', todo.length?'지금 처리해야 합니다':'처리할 문서 없음', todo.length>0)+
+        tile('진행 중', (running.length+prog.length)+'건', '행사 '+running.length+' · 문서 '+prog.length)+
+      '</div>'+
+
       '<div class="cols">'+
+        '<section class="card"><h2>월별 수입·지출</h2>'+chart+'</section>'+
         '<section class="card"><h2>내 결재 대기</h2>'+
           (todo.length? '<div class="people">'+todo.map(function(d){
             return '<div class="person" data-go="doc:'+esc(d.id)+'" style="cursor:pointer">'+
-              '<span class="pill p-'+docStatus(d)+'">'+DOC_STATUS[docStatus(d)]+'</span>'+
-              '<span class="nm">'+esc(d.title||'(제목 없음)')+'</span></div>';
+              '<span class="pill p-'+docStatus(d)+'">'+(DOC_KIND[d.type]||'문서')+'</span>'+
+              '<span class="nm">'+esc(d.title||'(제목 없음)')+'</span>'+
+              (d.type==='expense'?'<span style="font-family:var(--font-num);font-size:12.5px;color:var(--muted)">'+won(expTotal(d))+'</span>':'')+
+            '</div>';
           }).join('')+'</div>'
           : '<div class="empty" style="padding:22px 8px">처리할 문서가 없습니다.</div>')+
         '</section>'+
-        '<section class="card"><h2>월별 사례비 지급</h2>'+chart+'</section>'+
       '</div>'+
+
+      ((up.docs.length||due.rows.length)
+        ? '<div class="cols">'+
+          '<section class="card"><h2>줘야 할 돈</h2>'+
+            (up.docs.length
+              ? '<div class="scroll"><table><thead><tr><th>문서</th><th>받는 사람</th><th class="num">금액</th><th>예정</th></tr></thead><tbody>'+
+                up.docs.map(function(d){
+                  return '<tr class="rowlink" data-go="doc:'+esc(d.id)+'">'+
+                    '<td><b>'+esc(d.title||docLabel(d))+'</b></td>'+
+                    '<td style="color:var(--muted)">'+esc(d.payee||'—')+'</td>'+
+                    '<td class="num" style="font-family:var(--font-num)">'+won(expTotal(d))+'</td>'+
+                    '<td>'+(schedOn(d)
+                      ? '<span class="pill p-'+(payLate(d)?'rejected':'pending')+'">'+esc(schedOn(d))+'</span>'
+                      : '<span style="color:var(--zero)">미정</span>')+'</td></tr>';
+                }).join('')+'</tbody></table></div>'
+              : '<div class="empty" style="padding:20px 8px">승인 후 미지급 건이 없습니다.</div>')+
+            (up.adv.length
+              ? '<div class="note n-warn" style="margin-top:12px"><b>대신결제 '+won(up.advSum)+'</b> ('+up.adv.length+'건)도 '+
+                '돌려드려야 합니다. <button class="btn sm" data-go="acct:adv" style="margin-left:6px">보기</button></div>'
+              : '')+
+          '</section>'+
+          '<section class="card"><h2>받아야 할 돈</h2>'+
+            (due.rows.length
+              ? '<div class="scroll"><table><thead><tr><th>행사</th><th class="num">받기로 한 돈</th><th class="num">미수금</th></tr></thead><tbody>'+
+                due.rows.map(function(r){
+                  return '<tr class="rowlink" data-go="ev:'+esc(r.ev.id)+'">'+
+                    '<td><b>'+esc(r.ev.name||'(이름 없음)')+'</b>'+
+                      (r.ev.date?'<div style="font-size:12px;color:var(--muted)">'+esc(r.ev.date)+'</div>':'')+'</td>'+
+                    '<td class="num" style="font-family:var(--font-num);color:var(--muted)">'+won(revPlanned(r.ev))+'</td>'+
+                    '<td class="num" style="font-family:var(--font-num);color:var(--warn)">'+won(r.due)+'</td></tr>';
+                }).join('')+'</tbody></table></div>'
+              : '<div class="empty" style="padding:20px 8px">못 받은 돈이 없습니다.</div>')+
+          '</section>'+
+          '</div>'
+        : '')+
+
       '<section class="card"><h2>최근 활동</h2>'+
-        '<p class="hint" style="margin:0 0 10px">회사 전체 활동입니다. 모두에게 똑같이 보입니다.</p>'+
-        (recent.length?'<div class="scroll"><table><thead><tr><th>구분</th><th>제목</th><th>담당자</th><th>상태</th><th class="num">수정</th></tr></thead><tbody>'+
+        '<p class="hint" style="margin:0 0 10px">결재와 회계에서 생긴 일입니다. 모두에게 똑같이 보입니다. '+
+          '업무 진행 이야기는 슬랙에 있습니다.</p>'+
+        (recent.length?'<div class="scroll"><table><thead><tr><th>구분</th><th>내용</th><th>담당자</th><th>상태</th><th class="num">수정</th></tr></thead><tbody>'+
           recent.map(function(r){
-            return '<tr class="rowlink" data-go="'+esc(r.go)+'"><td style="color:var(--muted)">'+r.t+'</td>'+
+            return '<tr class="rowlink" data-go="'+esc(r.go)+'"><td style="color:var(--muted)">'+esc(r.t)+'</td>'+
               '<td><b>'+esc(r.n)+'</b></td>'+
-              '<td>'+r.w+'</td>'+
-              '<td><span class="pill p-'+r.s+'">'+r.l+'</span></td>'+
+              '<td>'+(r.w||'')+'</td>'+
+              '<td><span class="pill p-'+r.s+'">'+esc(r.l)+'</span></td>'+
               '<td class="num" style="color:var(--muted)">'+esc(shortTime(r.at))+'</td></tr>';
           }).join('')+'</tbody></table></div>'
         :'<div class="empty" style="padding:22px 8px">아직 활동이 없습니다.</div>')+
-      '</section></div>';
+      '</section>'+
+      '</div>';
   }
   function tile(k,v,s,hot){
     return '<div class="tile'+(hot?' hot':'')+'"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="s">'+esc(s||'')+'</div></div>';
@@ -1617,7 +1737,7 @@
   }
 
   function applyPreview(d){
-    var A=APPLY[d.type]||{f:[]};
+    var A=applySchema(d.type)||{f:[]};
     var rows=A.f.map(function(f){
       var v=d[f.k];
       if(f.t==='n') v=num(v,0)?won(num(v,0)):'';
@@ -1644,7 +1764,7 @@
   }
 
   function renderApply(d){
-    var A=APPLY[d.type];
+    var A=applySchema(d.type);
     var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d);
@@ -4886,8 +5006,9 @@
     if((el=t.closest('[data-go]'))){
       var g=el.dataset.go;
       if(g.indexOf('doc:')===0){ S.view='docs'; S.docSel=g.slice(4); }
+      else if(g.indexOf('acct:')===0){ S.view='acct'; S.acctMain=g.slice(5); }
       else { S.view='settle'; S.sel=g.slice(3); }
-      remember(); render(); return;
+      remember(); render(); goTop(); return;
     }
     if((el=t.closest('[data-dtab]'))){ S.docTab=el.dataset.dtab; remember(); render(); goTop(); return; }
     if((el=t.closest('[data-atab]'))){ S.acctTab=el.dataset.atab; remember(); render(); goTop(); return; }
