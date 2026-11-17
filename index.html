@@ -578,6 +578,7 @@
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
     lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
+    slackChs:null,slackChErr:'',
     budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null,fold:{}};
 
   var $=function(s,r){return (r||document).querySelector(s);};
@@ -4206,6 +4207,7 @@
         :'<div class="empty"><strong>아직 행사가 없습니다</strong>+ 새 행사를 눌러 첫 정산을 만들어 보세요.</div>')+'</div>';
   }
   function renderEvent(ev){
+    loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
       var day=m.w?c.rate:0,prep=c.alloc[i],pay=day+prep;
@@ -4242,9 +4244,14 @@
         '<section class="card"><h2>행사</h2>'+
           fld('text','evName','행사명',ev.name,dis)+
           '<div class="row2">'+fld('text','evDate','일자',ev.date,dis)+fld('text','evPlace','장소',ev.place,dis)+'</div>'+
-          fld('text','evSlack','슬랙 채널',ev.slackCh,dis)+
+          '<div class="field"><label for="evSlack">슬랙 채널</label>'+
+            '<input id="evSlack" list="slackchs" autocomplete="off" value="'+esc(ev.slackCh||'')+'"'+dis+
+            ' placeholder="'+(S.slackChs&&S.slackChs.length?'눌러서 고르거나 치면 걸러집니다':'#campus-worship')+'">'+
+            slackChList()+'</div>'+
           (ro?'':'<p class="hint" style="margin:-4px 0 0">이 채널에서 <b>/지출</b> 을 치면 이 행사로 달립니다. '+
-            '예: <b>#campus-worship</b> · 비워 두면 행사 없이 들어옵니다.</p>')+
+            '비워 두면 행사 없이 들어옵니다.'+
+            (S.slackChErr?' <span style="color:var(--warn)">목록을 못 불러왔습니다 — 직접 쳐주세요 ('+esc(S.slackChErr)+')</span>':'')+
+            '</p>')+
           '<div class="field"><label>잔여액 산출</label><div class="seg">'+
             sg('mDirect','직접 입력',ev.mode!=='calc',ro)+sg('mCalc','수입 − 운영비 − 세금',ev.mode==='calc',ro)+'</div></div>'+
           (ev.mode==='calc'
@@ -5179,6 +5186,35 @@
         .catch(function(){ return hookPost(text,hook); });
     });
   }
+  /* 채널 이름을 손으로 받아 적게 하면 오타가 난다. 오타는 조용히 안 걸린다 —
+     「행사 없음」으로 들어와 버린다. 한 번 불러다 고르게 한다. */
+  var chLoading=false;
+  function loadSlackChs(){
+    if(chLoading||S.slackChs!==null) return;
+    var url=fnUrl(); if(!url){ S.slackChs=[]; return; }
+    chLoading=true;
+    sbToken().then(function(tok){
+      if(!tok){ S.slackChs=[]; chLoading=false; return; }
+      return fetch(url,{method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+        body:JSON.stringify({action:'channels'})})
+        .then(function(r){ return r.json(); })
+        .then(function(j){
+          chLoading=false;
+          S.slackChs=(j&&j.ok&&j.rows)?j.rows:[];
+          S.slackChErr=(j&&j.ok)?'':((j&&j.error)||'채널을 못 불러왔습니다');
+          render();
+        });
+    }).catch(function(){ chLoading=false; S.slackChs=[]; S.slackChErr='채널을 못 불러왔습니다'; });
+  }
+  function slackChList(){
+    var L=S.slackChs||[];
+    if(!L.length) return '';
+    return '<datalist id="slackchs">'+L.map(function(c){
+      return '<option value="#'+esc(c.name)+'"></option>';
+    }).join('')+'</datalist>';
+  }
+
   function slackSay(kind, o, hookOverride){
     try{
       var sl=S.slack||{};

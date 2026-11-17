@@ -15,6 +15,8 @@
 //   SLACK_WEBHOOK_MONEY      돈 알림 채널 (없으면 위와 같은 곳)
 //   APP_BASE_URL             알림 링크에 쓸 ERP 주소
 //   CRON_SECRET              예약 알림을 부를 때 쓰는 암호
+//   SLACK_SIGNING_SECRET     /지출 이 슬랙에서 온 게 맞는지 보는 열쇠
+//   SLACK_BOT_TOKEN          채널 목록을 읽을 때만 쓴다 (xoxb-…)
 //   SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY   (대시보드가 자동으로 넣어준다)
 
 const J = (b: unknown, s = 200) =>
@@ -357,6 +359,40 @@ async function slash(raw: string) {
   );
 }
 
+/* 채널 목록. 행사에 채널을 손으로 받아 적게 하면 오타가 나고, 오타가
+   나면 조용히 안 걸린다 — 「행사 없음」으로 들어와 버린다. 골라서 넣게 한다.
+   봇 토큰은 여기 서버에만 둔다. 브라우저에 실으면 그 토큰으로 워크스페이스
+   전체를 읽을 수 있다. */
+async function slackChannels() {
+  const tok = env("SLACK_BOT_TOKEN");
+  if (!tok) {
+    return { ok: false, error: "SLACK_BOT_TOKEN 이 없습니다" };
+  }
+  const rows: { id: string; name: string }[] = [];
+  let cursor = "";
+  /* 채널이 많으면 한 번에 다 안 준다. 커서를 따라간다. 다섯 바퀴면 충분하고,
+     그래도 안 끝나면 거기서 멈춘다 — 끝없이 도는 것보다 낫다. */
+  for (let i = 0; i < 5; i++) {
+    const u = new URL("https://slack.com/api/conversations.list");
+    u.searchParams.set("types", "public_channel,private_channel");
+    u.searchParams.set("exclude_archived", "true");
+    u.searchParams.set("limit", "200");
+    if (cursor) u.searchParams.set("cursor", cursor);
+    const r = await fetch(u, { headers: { authorization: `Bearer ${tok}` } });
+    const j = await r.json().catch(() => ({}));
+    if (!j?.ok) {
+      return { ok: false, error: `슬랙이 거부했습니다 (${j?.error || r.status})` };
+    }
+    for (const c of j.channels || []) {
+      if (c?.name) rows.push({ id: String(c.id), name: String(c.name) });
+    }
+    cursor = j.response_metadata?.next_cursor || "";
+    if (!cursor) break;
+  }
+  rows.sort((a, b) => a.name.localeCompare(b.name));
+  return { ok: true, rows };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   try {
@@ -406,6 +442,19 @@ Deno.serve(async (req) => {
         ].join("\n"),
         !!body.money,
       ));
+    }
+
+    if (action === "channels") {
+      /* 로그인한 사람만. notify 와 같은 자물쇠다. */
+      const auth = req.headers.get("authorization") || "";
+      if (!auth.startsWith("Bearer ")) {
+        return J({ ok: false, error: "로그인이 필요합니다" }, 401);
+      }
+      const who = await fetch(`${env("SUPABASE_URL")}/auth/v1/user`, {
+        headers: { authorization: auth, apikey: env("SUPABASE_SERVICE_ROLE_KEY") },
+      });
+      if (!who.ok) return J({ ok: false, error: "로그인이 만료되었습니다" }, 401);
+      return J(await slackChannels());
     }
 
     if (action === "notify") {
