@@ -5282,6 +5282,7 @@
   }
 
   function renderConfig(){
+    loadSlackChs();
     var canCfg=S.me.canEdit;
     var sl=S.slack||{};
 
@@ -5323,6 +5324,14 @@
           (canCfg?'':' disabled')+'></div>'+
         '<p class="hint" style="margin:-4px 0 14px">여기를 채우면 <b>지급 예정 · 지급 완료 · 정산 완료</b>는 이 채널로 갑니다. '+
           '결재는 위 채널로 갑니다. 돈 이야기를 따로 두고 싶을 때 쓰세요.</p>'+
+        '<div class="field"><label for="slCmd">지출 올리는 채널</label>'+
+          '<input id="slCmd" list="slackchs" autocomplete="off" value="'+esc(sl.cmdCh||'')+'"'+
+          ' placeholder="#erp-지출"'+(canCfg?'':' disabled')+'>'+
+          slackChList()+
+          '<p class="hint" style="margin:6px 0 0">'+
+            '<b>여기와 행사에 연결된 채널에서만</b> 슬랙으로 지출을 올릴 수 있습니다. '+
+            '봇을 아무 채널에 초대해도 그 채널에서는 장부에 못 씁니다. '+
+            '행사와 무관한 운영비는 이 채널에서 올리시면 됩니다.</p></div>'+
         '<div class="field"><label for="slBase">알림 링크에 쓸 ERP 주소</label>'+
           '<input id="slBase" type="url" value="'+esc(sl.base||'')+'" placeholder="'+esc(location.origin+location.pathname)+'"'+
           (canCfg?'':' disabled')+'></div>'+
@@ -5702,6 +5711,7 @@
       var hook=($('#slHook')&&$('#slHook').value||'').trim();
       var hook2=($('#slHook2')&&$('#slHook2').value||'').trim();
       var base=($('#slBase')&&$('#slBase').value||'').trim();
+      var cmdCh=($('#slCmd')&&$('#slCmd').value||'').trim();
       if(base && !/^https?:\/\//.test(base)) return errbar('ERP 주소는 https:// 로 시작해야 합니다');
       if(hook && hook.indexOf('https://hooks.slack.com/')!==0)
         return errbar('슬랙 웹후크 주소는 https://hooks.slack.com/ 으로 시작합니다');
@@ -5713,7 +5723,7 @@
         on[x[0]] = c ? !!c.checked : true;
       });
       S.slackBusy=true; render();
-      return saveCfg('slack',{hook:hook,hook2:hook2,base:base,on:on}).then(function(){
+      return saveCfg('slack',{hook:hook,hook2:hook2,base:base,cmdCh:cmdCh,on:on}).then(function(){
         S.slackBusy=false; flash('저장했습니다'); render();
       }).catch(function(e){ S.slackBusy=false; errbar('저장 실패 '+(e&&(e.code||e.message)||'')); render(); });
     }

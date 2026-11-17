@@ -304,6 +304,14 @@ async function eventOfChannel(chId: string, chName: string) {
 }
 
 async function slashExpense(text: string, who: string, chId = "", chName = "") {
+  const linked = await eventOfChannel(chId, chName);
+  const cmd = await cmdChannel();
+  if (!linked && !sameCh(cmd, chName) && !sameCh(cmd, chId)) {
+    return ephemeral(
+      "이 채널에서는 지출을 올릴 수 없습니다. 행사에 연결된 채널이나 지출 채널에서 올려주세요." +
+        (cmd ? ` (지출 채널: ${cmd.startsWith("#") ? cmd : "#" + cmd})` : ""),
+    );
+  }
   const cut = stripOps(text);
   const got = parseExpense(cut.text);
   if (!got || !got.payee) {
@@ -312,7 +320,7 @@ async function slashExpense(text: string, who: string, chId = "", chName = "") {
         "`거래처 금액 내역` 순서입니다. 내역은 없어도 됩니다.",
     );
   }
-  const ev = cut.ops ? null : await eventOfChannel(chId, chName);
+  const ev = cut.ops ? null : linked;
   const rows = await docs("docs");
   const now = new Date().toISOString();
   const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
@@ -507,6 +515,24 @@ async function erpUidOf(slackUser: string) {
 }
 
 /* 회계 역할인 사람. config/roles 문서에 담겨 있다. */
+/* 어디서 장부에 쓸 수 있는가.
+   「봇이 있는 채널」이 아니라 「ERP 에서 연결한 채널」이다. 둘은 다르다.
+   앞엣것은 슬랙에서 누가 초대만 해도 열리고, 뒤엣것은 ERP 관리자가
+   행사에 채널을 적거나 지출 채널로 지정해야 열린다.
+   쓰기 권한을 여는 열쇠는 ERP 안에 있어야 한다. */
+async function cmdChannel() {
+  try {
+    const rows = await docs("config");
+    return String((rows.find((r) => r.id === "slack")?.data as any)?.cmdCh || "");
+  } catch {
+    return "";
+  }
+}
+function sameCh(a: string, b: string) {
+  const n = (x: string) => String(x || "").trim().replace(/^#/, "").toLowerCase();
+  return !!n(a) && n(a) === n(b);
+}
+
 async function accountingUid() {
   try {
     const rows = await docs("config");
@@ -521,6 +547,14 @@ async function accountingUid() {
 async function copyReceipt(file: any, docId: string) {
   const url = file?.url_private_download || file?.url_private;
   if (!url) return null;
+  /* 주소는 슬랙 것만 연다. 서명이 유일한 자물쇠인데, 그게 뚫리는 날
+     이 줄이 없으면 우리 서버가 남의 심부름을 하게 된다. */
+  try {
+    const h = new URL(url).hostname;
+    if (h !== "files.slack.com" && !h.endsWith(".slack.com")) return null;
+  } catch {
+    return null;
+  }
   const tok = env("SLACK_BOT_TOKEN");
   const r = await fetch(url, { headers: { authorization: `Bearer ${tok}` } });
   if (!r.ok) return null;
@@ -561,6 +595,18 @@ function alreadyMade(rows: { data: Record<string, any> }[], eventId: string) {
   return rows.some((r) => (r.data as any)?.fromSlack?.eventId === eventId);
 }
 
+/* 한 사람이 하루에 만들 수 있는 수를 묶어 둔다. 실수로 같은 글을 계속
+   올리거나 누가 장난을 쳐도 장부가 쓰레기로 덮이지 않는다.
+   막혀도 ERP 에서는 얼마든지 만들 수 있다 — 거기엔 사람이 있다. */
+const SLACK_DAY_CAP = 20;
+function madeTodayBy(rows: { data: Record<string, any> }[], slackUser: string) {
+  const t = todayKST();
+  return rows.filter((r) => {
+    const f = (r.data as any)?.fromSlack;
+    return f?.user === slackUser && String(f?.at || "").slice(0, 10) >= t;
+  }).length;
+}
+
 async function receiptToExpense(ev: any, eventId: string) {
   const text = String(ev.text || "").replace(/^\s*\/?지출\s*/, "");
   const cut = stripOps(text);
@@ -577,28 +623,56 @@ async function receiptToExpense(ev: any, eventId: string) {
   const rows = await docs("docs");
   if (alreadyMade(rows, eventId)) return;
 
+  const info0: any = await slackApi("conversations.info", { channel: String(ev.channel || "") });
+  const chName0 = String(info0?.channel?.name || "");
+  const linked = await eventOfChannel(String(ev.channel || ""), chName0);
+  const cmd = await cmdChannel();
+  if (!linked && !sameCh(cmd, chName0) && !sameCh(cmd, String(ev.channel || ""))) {
+    await slackPostMessage(
+      ev.channel,
+      "이 채널에서는 지출을 올릴 수 없습니다. 행사에 연결된 채널이나 지출 채널에서 올려주세요." +
+        (cmd ? ` (지출 채널: ${cmd.startsWith("#") ? cmd : "#" + cmd})` : ""),
+      ev.thread_ts || ev.ts,
+    );
+    return;
+  }
+
+  /* ERP 계정이 있는 사람만 만들 수 있다. 채널에는 ERP 를 안 쓰는 사람도
+     있고, 그 사람 이름으로 장부에 줄이 생기면 누가 쓴 돈인지 알 수 없다.
+     슬랙 채널 하나가 곧 장부 쓰기 권한이 되어서는 안 된다. */
   const me = await erpUidOf(String(ev.user || ""));
+  if (!me) {
+    await slackPostMessage(
+      ev.channel,
+      "ERP 계정을 찾지 못해 만들지 않았습니다. 슬랙 이메일과 ERP 로그인 이메일이 같아야 합니다.",
+      ev.thread_ts || ev.ts,
+    );
+    return;
+  }
+  if (madeTodayBy(rows, String(ev.user || "")) >= SLACK_DAY_CAP) {
+    await slackPostMessage(
+      ev.channel,
+      `오늘 슬랙으로 만든 지출결의서가 ${SLACK_DAY_CAP}건을 넘었습니다. 나머지는 ERP에서 만들어 주세요.`,
+      ev.thread_ts || ev.ts,
+    );
+    return;
+  }
   const acc = await accountingUid();
-  /* 사건에는 채널 번호만 온다. 행사에는 「#이름」으로 적어 두므로
-     이름을 한 번 물어본다. */
-  const info: any = await slackApi("conversations.info", { channel: String(ev.channel || "") });
-  const chName = String(info?.channel?.name || "");
-  const evt = cut.ops ? null : await eventOfChannel(String(ev.channel || ""), chName);
+  const evt = cut.ops ? null : linked;
   const now = new Date().toISOString();
   const id = "d" + Date.now() + Math.floor(Math.random() * 1000);
 
   /* 기안자 본인이 1차, 회계가 협조. 올린 사람을 못 찾으면 결재선을
      비워 둔다 — 남의 이름으로 결재선을 세울 수는 없다. */
-  const steps: any[] = [];
-  if (me) steps.push({ uid: me.uid, state: "pending", comment: "", at: "" });
-  if (acc && acc !== me?.uid) {
+  const steps: any[] = [{ uid: me.uid, state: "pending", comment: "", at: "" }];
+  if (acc && acc !== me.uid) {
     steps.push({ uid: acc, role: "coop", state: "pending", comment: "", at: "" });
   }
 
   const files: any[] = [];
   for (const f of (ev.files || []).slice(0, 3)) {
     const m = await copyReceipt(f, id);
-    if (m) { m.by = me?.uid || ""; files.push(m); }
+    if (m) { m.by = me.uid; files.push(m); }
   }
 
   const body = {
@@ -620,8 +694,8 @@ async function receiptToExpense(ev: any, eventId: string) {
     steps,
     /* 결재선이 선 것만 올린다. 결재선 없는 「상신」은 아무 데도 못 가는
        문서를 만드는 일이다. */
-    status: steps.length ? "submitted" : "draft",
-    drafter: me?.uid || "",
+    status: "submitted",
+    drafter: me.uid,
     fromSlack: { user: String(ev.user || ""), eventId, at: now },
     createdAt: now,
     updatedAt: now,
@@ -648,11 +722,9 @@ async function receiptToExpense(ev: any, eventId: string) {
     got.what || "",
     evt ? `*행사* ${evt.name}` : cut.ops ? "*사업* 운영비" : "",
     files.length ? `*영수증* ${files.length}장 붙였습니다` : "*영수증* 못 가져왔습니다",
-    me
-      ? (steps.length > 1
-        ? `*결재선* ${me.name} (기안) → 회계 (협조)`
-        : `*결재선* ${me.name} (기안)`)
-      : "_올리신 분을 ERP 계정과 맞추지 못했습니다. 열어서 본인 것으로 만들어 주세요._",
+    steps.length > 1
+      ? `*결재선* ${me.name} (기안) → 회계 (협조)`
+      : `*결재선* ${me.name} (기안)`,
     `:arrow_upper_right: <${base()}#docs/${id}|ERP에서 열기>`,
   ].filter(Boolean);
   await slackPostMessage(ev.channel, L.join("\n"), ev.thread_ts || ev.ts);
