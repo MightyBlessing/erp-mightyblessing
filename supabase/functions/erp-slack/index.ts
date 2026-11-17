@@ -183,6 +183,24 @@ Deno.serve(async (req) => {
       return J(await digest());
     }
 
+    if (action === "test") {
+      /* 「보낼 게 없습니다」 로는 웹후크 주소가 맞는지 알 수 없다.
+         주소가 틀려도 조용히 ok 가 나온다. 그래서 한 줄을 실제로 쏴 본다. */
+      const key = body.key || url.searchParams.get("key") || "";
+      if (!env("CRON_SECRET") || key !== env("CRON_SECRET")) {
+        return J({ ok: false, error: "허가되지 않은 요청입니다" }, 401);
+      }
+      return J(await postSlack(
+        [
+          ":satellite_antenna: *연결 시험* — 알림이 이 채널로 옵니다",
+          "매일 아침 9시에 그날 챙길 것을 묶어서 보내드립니다.",
+          `:arrow_upper_right: <${base()}|ERP 열기>`,
+          foot(),
+        ].join("\n"),
+        !!body.money,
+      ));
+    }
+
     if (action === "notify") {
       /* 로그인한 사람만. 토큰은 ERP 가 그대로 넘겨준다. */
       const auth = req.headers.get("authorization") || "";
