@@ -596,7 +596,7 @@
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
     lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
-    slackChs:null,slackChErr:'',
+    slackChs:null,slackChErr:'',editBase:{},
     budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null,fold:{}};
 
   var $=function(s,r){return (r||document).querySelector(s);};
@@ -1162,6 +1162,16 @@
   }
   /* 슬랙에서 들어온 초안은 아직 임자가 없다. 「내 문서」에서도 보여야
      누군가 집어 간다. 아무 탭에도 안 뜨면 영영 묻힌다. */
+  /* 누가 지금 이 문서를 고칠 수 있는가.
+     작성중이면 기안자(와 관리자). 결재가 도는 중이면 「지금 차례인 사람」.
+     앞사람 승인은 그대로 두기로 했으므로, 고친 내용은 반드시 이력에
+     남기고 이미 승인한 사람에게 알린다. */
+  function canEditNow(d,st){
+    st=st||docStatus(d);
+    if(st==='draft') return d.drafter===S.me.id||S.me.canEdit||slackDraft(d);
+    if(st==='submitted'||st==='progress') return isMyTurn(d);
+    return false;
+  }
   function slackDraft(d){
     return !!(d&&d.fromSlack&&!d.drafter&&docStatus(d)==='draft');
   }
@@ -1296,6 +1306,73 @@
     if(saveTimer)clearTimeout(saveTimer);
     saveTimer=setTimeout(flush,700);
   }
+  /* ─── 결재 중 수정 이력 ───
+     결재가 도는 중에 고칠 수 있게 하면, 앞사람이 승인한 내용과 실제로
+     지급되는 내용이 달라질 수 있다. 그래서 무엇이 어떻게 바뀌었는지
+     문서에 남기고 앞사람에게 알린다. 남기지 않을 거면 고치게 두면 안 된다. */
+  var DOCF={title:'제목',no:'문서번호',date:'기안일자',eventId:'행사',
+    account:'계정과목',method:'지급 수단',payee:'받는 사람',payeeBank:'은행',
+    payeeAcct:'계좌번호',dueDate:'지급 희망일',note:'사유',
+    to:'수신',cc:'참조',subject:'제목',signer:'발신명의'};
+  /* 돈에 직결된 칸. 바뀌면 알림 문구에서 먼저 보여준다. */
+  var MONEYF={payee:1,payeeBank:1,payeeAcct:1,method:1,items:1};
+  function fieldLabel(d,k){
+    if(DOCF[k]) return DOCF[k];
+    var A=applySchema(d&&d.type);
+    if(A){ var hit=null; (A.f||[]).forEach(function(f){ if(f.k===k) hit=f.l; }); if(hit) return hit; }
+    return k;
+  }
+  function showVal(d,k,v){
+    if(k==='eventId'){ var e=S.events[v]; return e?(e.name||'(이름 없음)'):'(지정 안 함)'; }
+    if(k==='method') return METHODS[v]||String(v||'');
+    if(v===''||v===undefined||v===null) return '(비움)';
+    return String(v);
+  }
+  function docDiff(before,after){
+    var out=[];
+    if(!before||!after) return out;
+    var keys={};
+    Object.keys(DOCF).forEach(function(k){ keys[k]=1; });
+    var A=applySchema(after.type);
+    if(A)(A.f||[]).forEach(function(f){ keys[f.k]=1; });
+    Object.keys(keys).forEach(function(k){
+      var a=before[k], b=after[k];
+      if(a===undefined&&b===undefined) return;
+      if(String(a==null?'':a)===String(b==null?'':b)) return;
+      out.push({k:k, l:fieldLabel(after,k), from:showVal(after,k,a), to:showVal(after,k,b)});
+    });
+    if(after.type==='expense'){
+      var ta=expTotal(before), tb=expTotal(after);
+      if(ta!==tb) out.push({k:'items', l:'금액', from:won(ta), to:won(tb)});
+    }
+    return out;
+  }
+  /* 이미 승인한 사람들. 바뀐 걸 알아야 할 사람이다. */
+  function approvedUids(d){
+    return (d.steps||[]).filter(function(x){ return x.state==='approved'&&x.uid!==S.me.id; })
+      .map(function(x){ return x.uid; });
+  }
+  function logEdits(id,before,after){
+    var diffs=docDiff(before,after);
+    if(!diffs.length) return null;
+    var row={at:nowISO(), by:S.me.id||'', fields:diffs};
+    after.log=(after.log||[]).concat([row]);
+    var who=S.me.name||'누군가';
+    var moneyHit=diffs.some(function(x){ return MONEYF[x.k]; });
+    var line=diffs.map(function(x){ return x.l+' '+x.from+' → '+x.to; }).join(' · ');
+    approvedUids(after).forEach(function(u){
+      notify(u, who+' 님이 승인 뒤에 「'+docLabel(after)+'」을(를) 고쳤습니다 — '+line, id);
+    });
+    try{
+      slackSay('edit', {what:docLabel(after),
+        sub:who+' 님이 결재 중에 고쳤습니다'+(moneyHit?' · 돈에 관한 칸입니다':''),
+        rows:diffs.slice(0,6).map(function(x){ return [x.l, x.from+' → '+x.to]; }),
+        link:appLink('docs',id), cta:'문서 보기',
+        to:mailOf(after.drafter)});
+    }catch(e){}
+    return row;
+  }
+
   function flush(){
     if(saving||!dirty||!S.db)return;
     var kind=dirtyKind,id=dirty; dirty=null; dirtyKind=null;
@@ -1303,6 +1380,15 @@
     if(!src)return;
     saving=true;
     var body=clone(src); delete body.id; body.updatedAt=nowISO();
+    /* 결재가 도는 중이었다면 무엇이 바뀌었는지 떠내어 문서에 붙인다. */
+    if(kind==='doc'&&S.editBase[id]){
+      var st0=docStatus(src);
+      if(st0!=='draft'){
+        var row=logEdits(id,S.editBase[id],body);
+        if(row){ src.log=body.log; }
+      }
+      S.editBase[id]=clone(body);
+    }
     S.db.doc((kind==='doc'?'docs/':'events/')+id).set(body)
       .catch(function(e){errbar('저장 실패 '+(e&&e.code||''));})
       .then(function(){saving=false; if(dirty)flush();});
@@ -1716,7 +1802,7 @@
   /* ---- 지출결의서 ---- */
   function renderExpense(d){
     var st=docStatus(d);
-    var editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit||slackDraft(d));
+    var editable=writable()&&canEditNow(d,st);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d), total=expTotal(d), ps=payState(d);
     /* 예정을 잡았다고 지급 버튼이 사라지면 안 된다. 예정은 거쳐 가는 단계일 뿐,
@@ -1806,6 +1892,11 @@
           PAY_LABEL[ps]+(ps==='sched'?' '+esc(schedOn(d)):'')+'</span>':'')+
         '<span style="flex:1"></span>'+delCtl+'</div>'+
       (mine?'<div class="note n-warn" style="margin:0 0 14px">내 결재 차례입니다.</div>':'')+
+      (editable&&st!=='draft'
+        ? '<div class="note n-warn" style="margin:0 0 14px">'+
+            '<b>결재 중입니다.</b> 지금 고치면 <b>무엇이 어떻게 바뀌었는지 문서에 남고</b> '+
+            '이미 승인한 분들께 알림이 갑니다. 앞선 승인은 그대로 유지됩니다.</div>'
+        : '')+
       (slackDraft(d)
         ? '<div class="note n-info" style="margin:0 0 14px">'+
             '<b>슬랙에서 들어온 초안입니다</b> · '+esc((d.fromSlack||{}).user||'')+' 님<br>'+
@@ -1861,6 +1952,7 @@
           {open:!!(d.note||'').trim()||editable,
            sum:(d.note||'').trim()?esc((d.note||'').trim().slice(0,24)):'비어 있습니다'})+
         foldCard('xprev','미리보기',expensePreview(d),{open:false,sum:'눌러서 펼치기'})+
+        editLogCard(d)+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
           (st==='approved'?'<p class="hint" style="margin:10px 0 0">PDF는 파일로 바로 내려받습니다.</p>':'')+
@@ -1993,7 +2085,7 @@
 
   function renderApply(d){
     var A=applySchema(d.type);
-    var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var st=docStatus(d), editable=writable()&&canEditNow(d,st);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d);
 
@@ -2057,6 +2149,7 @@
       '</div><div class="stack" style="min-width:0">'+
         evidenceCard(d)+
         '<section class="card"><h2>미리보기</h2>'+applyPreview(d)+'</section>'+
+        editLogCard(d)+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
         '</section>'+
@@ -2070,9 +2163,13 @@
   }
 
   function renderDoc(d){
+    /* 고치기 전 모습을 한 벌 떠둔다. 저장할 때 이것과 견주어 무엇이
+       바뀌었는지 뽑는다. 한 번만 떠둔다 — 다시 그릴 때마다 떠내면
+       방금 친 글자가 「원래 그랬던 것」이 되어 이력이 빈다. */
+    if(d&&d.id&&!S.editBase[d.id]) S.editBase[d.id]=clone(d);
     if(d.type==='expense') return renderExpense(d);
     if(isApply(d)) return renderApply(d);
-    var st=docStatus(d), editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var st=docStatus(d), editable=writable()&&canEditNow(d,st);
     var dis=editable?'':' disabled';
     var mine=isMyTurn(d);
 
@@ -2153,6 +2250,7 @@
         attCard(d)+
         evidenceCard(d,{doc:true})+
         '<section class="card"><h2>미리보기</h2>'+docPreview(d)+'</section>'+
+        editLogCard(d)+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+printHint+
         '</section>'+
@@ -2168,7 +2266,7 @@
      파일 없이 '별첨 1부.' 처럼 적기만 하는 경우도 있어 따로 둔다. */
   function attCard(d){
     var st=docStatus(d);
-    var editable=writable()&&st==='draft'&&(d.drafter===S.me.id||S.me.canEdit);
+    var editable=writable()&&canEditNow(d,st);
     var L=d.att||[];
     var rows=L.map(function(x,i){
       return '<div class="para"><span class="n">'+(L.length>1?(i+1)+'.':'·')+'</span>'+
@@ -2426,6 +2524,26 @@
       '<span class="org">'+esc(title)+'</span></div>';
   }
 
+  /* 무엇이 언제 누구 손에 바뀌었는지. 결재가 도는 중에 고칠 수 있게 한
+     이상 이 카드가 없으면 안 된다 — 승인한 내용과 지급되는 내용이
+     달라질 수 있고, 그걸 확인할 데가 여기뿐이다. */
+  function editLogCard(d){
+    var L=(d&&d.log)||[];
+    if(!L.length) return '';
+    return '<section class="card"><h2>수정 이력</h2><div class="scroll"><table>'+
+      '<thead><tr><th style="width:116px">언제</th><th style="width:96px">누가</th><th>무엇을</th></tr></thead><tbody>'+
+      L.slice().reverse().map(function(r){
+        return '<tr><td style="white-space:nowrap">'+esc(shortTime(r.at))+'</td>'+
+          '<td>'+esc(nameOf(r.by))+'</td><td>'+
+          (r.fields||[]).map(function(x){
+            return '<div><b>'+esc(x.l)+'</b> <span style="color:var(--zero)">'+esc(x.from)+'</span>'+
+              ' → <b>'+esc(x.to)+'</b></div>';
+          }).join('')+'</td></tr>';
+      }).join('')+
+      '</tbody></table></div>'+
+      '<p class="hint" style="margin-top:10px">결재가 도는 중에 고친 내용입니다. '+
+        '이미 승인한 분들께는 알림이 갔습니다.</p></section>';
+  }
   function docSteps(d){
     var st=docStatus(d), cur=currentStep(d);
     if(!(d.steps||[]).length) return '<div class="empty" style="padding:20px 8px">결재선이 지정되지 않았습니다.</div>';
@@ -5293,6 +5411,7 @@
   ];
   var SLACK_EV=[
     ['ask','결재 요청'],['ok','결재 승인'],['no','결재 반려'],
+    ['edit','결재 중 수정'],
     ['due','지급 예정일'],['paid','지급 완료'],['settled','정산 완료']
   ];
   function saveCfg(id,body){
@@ -5341,6 +5460,7 @@
     due:    {e:':calendar:',        t:'지급 예정'},
     paid:   {e:':moneybag:',        t:'지급 완료'},
     settled:{e:':ledger:',          t:'정산 완료'},
+    edit:   {e:':pencil2:',          t:'결재 중 수정'},
     test:   {e:':satellite_antenna:',t:'연결 시험'}
   };
   function ymdKo(d){
