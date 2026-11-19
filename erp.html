@@ -278,6 +278,7 @@
   .fixin{width:92px; padding:4px 6px; font-size:12.5px; text-align:right; font-family:var(--font-num)}
   .fixin::placeholder{color:var(--zero); font-weight:400}
   .oldtxt{margin-top:5px; font-size:11.5px; color:var(--zero); white-space:pre-wrap}
+  .ceotag{margin-top:2px; font-size:10.5px; color:var(--accent-ink); white-space:nowrap}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
 
@@ -1032,21 +1033,33 @@
     fixed.forEach(function(v,i){ if(v!==null){ alloc[i]=v; fixSum+=v; } });
     var poolLeft=pool-fixSum; if(poolLeft<0) poolLeft=0;
 
+    /* 대표를 빼고 1등 점수를 구한 다음, 대표에게 그 점수를 준다.
+       대표끼리만 있는 행사면 자기 점수를 그대로 쓴다. */
+    var ceoSet=ceoNameSet();
+    var isCeo=ms.map(function(m){ return isCeoMember(m,ceoSet); });
+    var topOther=0;
+    ms.forEach(function(m,i){ if(fixed[i]!==null||isCeo[i]) return;
+      var v=memberPt(m); if(v>topOther) topOther=v; });
+    var ptOf=function(m,i){
+      if(isCeo[i]&&topOther>0) return topOther;
+      return memberPt(m);
+    };
+
     var maxPt=0;
     ms.forEach(function(m,i){ if(fixed[i]!==null) return;
-      var v=memberPt(m); if(v>maxPt) maxPt=v; });
+      var v=ptOf(m,i); if(v>maxPt) maxPt=v; });
     var want=0;
     if(maxPt>0){
       var raw=ms.map(function(m,i){
         if(fixed[i]!==null) return 0;
-        var v=memberPt(m);
+        var v=ptOf(m,i);
         return v>0 ? cap*(v/maxPt) : 0;
       });
       want=raw.reduce(function(a,b){return a+b;},0);
       var shrink=(want>poolLeft&&want>0)?(poolLeft/want):1;
       ms.forEach(function(m,i){
         if(fixed[i]!==null) return;
-        if(!(memberPt(m)>0)){ alloc[i]=0; return; }
+        if(!(ptOf(m,i)>0)){ alloc[i]=0; return; }
         var v=Math.floor((raw[i]*shrink)/unit)*unit;
         if(v>cap) v=cap;
         alloc[i]=v;
@@ -1058,8 +1071,9 @@
     var prepTotal=alloc.reduce(function(a,b){return a+b;},0);
     return {net:net,rate:rate,ratio:ratio,cap:cap,workedCount:workedCount,dayTotal:dayTotal,fundBase:fundBase,
       pool:pool,poolLeft:poolLeft,fixSum:fixSum,fixed:fixed,days:dayList,
+      isCeo:isCeo,topOther:topOther,ptEff:ms.map(function(m,i){return ptOf(m,i);}),
       alloc:alloc,capped:capped,anyCap:capped.some(Boolean),shrunk:shrunk,want:want,
-      maxPt:maxPt,ptSum:ms.reduce(function(a,m){return a+memberPt(m);},0),prepTotal:prepTotal,
+      maxPt:maxPt,ptSum:ms.reduce(function(a,m,i){return a+ptOf(m,i);},0),prepTotal:prepTotal,
       leftover:pool-prepTotal,payTotal:dayTotal+prepTotal};
   }
   function accountingUids(){return Object.keys(S.roles).filter(function(u){return S.roles[u]==='accounting';});}
@@ -4303,7 +4317,9 @@
         /* 11·7·3·0 은 기준이지 전부가 아니다. 역할이 그 넷에 안 떨어지는
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
-        '<td style="text-align:center"><b class="ptsum" data-ptsum="'+i+'">'+memberPt(m)+'</b></td>'+
+        '<td style="text-align:center"><b class="ptsum" data-ptsum="'+i+'">'+
+          (c.isCeo[i]&&c.topOther>0?c.topOther:memberPt(m))+'</b>'+
+          (c.isCeo[i]?'<div class="ceotag">대표 · 1등과 같음</div>':'')+'</td>'+
         '<td><input data-f="memo" data-i="'+i+'" value="'+esc(m.memo||'')+'" '+
           'placeholder="적을 게 있으면" style="min-width:120px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
@@ -4319,7 +4335,8 @@
     var ptLegend='<p class="hint" style="margin:10px 0 0">'+
       '한 일을 <b>눌러서</b> 켜주세요. 누른 수만큼 점수가 올라가고, '+
       '<b>점수가 가장 높은 사람이 1인 상한</b>을 받습니다. 나머지는 그 비율대로 받습니다.<br>'+
-      '항목은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.</p>';
+      '항목은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.<br>'+
+      '<b>대표</b>는 누른 것과 상관없이 <b>기여도 1등과 같은 점수</b>로 잡힙니다. 금액을 직접 적으면 그게 우선입니다.</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
     if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'일','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
@@ -5232,6 +5249,23 @@
     if(!m) return null;
     if(m.fix===undefined||m.fix===null||String(m.fix).trim()==='') return null;
     return Math.max(0,num(m.fix,0));
+  }
+  /* 대표는 기여도 1등과 같은 사례비를 받는다.
+     금액을 나중에 덮어쓰지 않고 「점수를 1등과 같게」 둔다. 상한에서
+     비율로 내려오는 규칙이라 점수가 같으면 금액이 같고, 예산이 모자라
+     줄어들 때도 둘이 같이 줄어든다. 금액을 덮어쓰면 예산이 깨진다. */
+  function ceoNameSet(){
+    var out={};
+    ceoUids().forEach(function(u){
+      var n=String(nameOf(u)||'').trim(); if(n) out[n]=1;
+      var m2=S.members[u]; if(m2&&m2.name) out[String(m2.name).trim()]=1;
+    });
+    return out;
+  }
+  function isCeoMember(m,set){
+    if(!m) return false;
+    var n=String(m.n||'').trim(), pn=String(personName(m.pid)||'').trim();
+    return !!((n&&set[n])||(pn&&set[pn]));
   }
   function memberPt(m){
     if(!m) return 0;
@@ -6326,7 +6360,8 @@
     var c=compute(ev),tb=document.querySelector('tbody'); if(!tb)return;
     Array.prototype.forEach.call(tb.rows,function(tr,i){
       var m=ev.members&&ev.members[i]; if(!m)return;
-      var sb=tr.querySelector('[data-ptsum]'); if(sb) sb.textContent=memberPt(m);
+      var sb=tr.querySelector('[data-ptsum]');
+      if(sb) sb.textContent=(c.isCeo[i]&&c.topOther>0)?c.topOther:memberPt(m);
       var day=memberDays(m)*c.rate,prep=c.alloc[i]||0;
       if(tr.cells[6])tr.cells[6].textContent=day?day.toLocaleString('ko-KR'):'—';
       if(tr.cells[7])tr.cells[7].textContent=prep?prep.toLocaleString('ko-KR'):'—';
