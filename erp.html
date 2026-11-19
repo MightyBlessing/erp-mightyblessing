@@ -1033,16 +1033,29 @@
     fixed.forEach(function(v,i){ if(v!==null){ alloc[i]=v; fixSum+=v; } });
     var poolLeft=pool-fixSum; if(poolLeft<0) poolLeft=0;
 
+    /* 이 행사에서 한 사람이라도 단추를 눌렀으면, 이 행사는 새 규칙으로
+       넘어온 것이다. 그때부터 아무것도 안 누른 사람은 0 이다.
+       아무도 안 누른 행사만 예전에 적어 둔 숫자를 그대로 쓴다 —
+       지난 정산을 지금 규칙으로 다시 계산하면 안 되니까.
+       한 행사 안에서 누구는 단추, 누구는 옛 숫자면 뒤섞여 말이 안 된다. */
+    var anyPicked=ms.some(function(m){
+      return ((m.prep||[]).length||(m.day||[]).length)>0; });
+    var basePt=function(m){
+      var has=((m&&m.prep||[]).length||(m&&m.day||[]).length)>0;
+      if(has) return memberPt(m);
+      return anyPicked?0:num(m&&m.pt,0);
+    };
+
     /* 대표를 빼고 1등 점수를 구한 다음, 대표에게 그 점수를 준다.
        대표끼리만 있는 행사면 자기 점수를 그대로 쓴다. */
     var ceoSet=ceoNameSet();
     var isCeo=ms.map(function(m){ return isCeoMember(m,ceoSet); });
     var topOther=0;
     ms.forEach(function(m,i){ if(fixed[i]!==null||isCeo[i]) return;
-      var v=memberPt(m); if(v>topOther) topOther=v; });
+      var v=basePt(m); if(v>topOther) topOther=v; });
     var ptOf=function(m,i){
       if(isCeo[i]&&topOther>0) return topOther;
-      return memberPt(m);
+      return basePt(m);
     };
 
     var maxPt=0;
@@ -4436,7 +4449,7 @@
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
         '<td style="text-align:center"><b class="ptsum" data-ptsum="'+i+'">'+
-          (c.isCeo[i]&&c.topOther>0?c.topOther:memberPt(m))+'</b>'+
+          num(c.ptEff[i],0)+'</b>'+
           (c.isCeo[i]?'<div class="ceotag">대표 · 1등과 같음</div>':'')+'</td>'+
         '<td><input data-f="memo" data-i="'+i+'" value="'+esc(m.memo||'')+'" '+
           'placeholder="적을 게 있으면" style="min-width:120px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
@@ -6481,7 +6494,7 @@
     Array.prototype.forEach.call(tb.rows,function(tr,i){
       var m=ev.members&&ev.members[i]; if(!m)return;
       var sb=tr.querySelector('[data-ptsum]');
-      if(sb) sb.textContent=(c.isCeo[i]&&c.topOther>0)?c.topOther:memberPt(m);
+      if(sb) sb.textContent=num(c.ptEff[i],0);
       var day=memberDays(m)*c.rate,prep=c.alloc[i]||0;
       if(tr.cells[6])tr.cells[6].textContent=day?day.toLocaleString('ko-KR'):'—';
       if(tr.cells[7])tr.cells[7].textContent=prep?prep.toLocaleString('ko-KR'):'—';
