@@ -275,11 +275,14 @@
   .rowlink:hover td:last-child{border-top-right-radius:8px; border-bottom-right-radius:8px}
   .desc{min-width:180px; font-size:12.5px; color:var(--muted); line-height:1.45}
   .ptsel{width:60px; padding:4px 6px; font-size:12px}
-  .ptchip{display:inline-flex; align-items:center; gap:2px; margin:0 3px 0 0; cursor:pointer}
-  .ptchip input{margin:0}
-  .ptchip span{font-size:11.5px; color:var(--muted); font-family:var(--font-num)}
-  .ptchip input:checked + span{color:var(--accent-ink); font-weight:700}
-  .ptsum{margin-left:6px; font-family:var(--font-num); font-size:13px}
+  .togs{display:flex; flex-wrap:wrap; gap:4px; min-width:190px}
+  .tog{padding:3px 8px; font-size:11.5px; line-height:1.5; border:1px solid var(--line);
+       border-radius:999px; background:var(--card); color:var(--muted); cursor:pointer}
+  .tog:hover:not(:disabled){border-color:var(--accent); color:var(--ink)}
+  .tog.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); font-weight:600}
+  .tog:disabled{cursor:default; opacity:.65}
+  .ptsum{font-family:var(--font-num); font-size:15px; font-weight:700}
+  .oldtxt{margin-top:5px; font-size:11.5px; color:var(--zero); white-space:pre-wrap}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
 
@@ -3913,7 +3916,7 @@
         if(day+prep<=0) return;
         out.push({evId:k, evName:ev.name||'(이름 없음)', on:on,
                   day:day, prep:prep, amt:day+prep, capped:!!c.capped[i],
-                  pt:memberPt(m), role:m.r||'',
+                  pt:memberPt(m), role:togText('day',m)||m.r||'',
                   paid:progress(ev).status==='paid'});
       });
     });
@@ -4257,9 +4260,20 @@
         }).join('')+'</tbody></table></div>'
         :'<div class="empty"><strong>아직 행사가 없습니다</strong>+ 새 행사를 눌러 첫 정산을 만들어 보세요.</div>')+'</div>';
   }
+  /* 누르면 켜지는 단추. select 나 글상자와 달리 열고 고르고 닫는 과정이
+     없다 — 보이는 것을 그냥 누른다. */
+  function togs(kind,list,m,i,dis){
+    var on=(m&&m[kind])||[];
+    return '<div class="togs">'+list.map(function(it,k){
+      var hit=on.indexOf(k)>=0;
+      return '<button type="button" class="tog'+(hit?' on':'')+'" '+
+        'data-tog="'+kind+'" data-tk="'+k+'" data-i="'+i+'"'+(dis?' disabled':'')+
+        ' aria-pressed="'+(hit?'true':'false')+'">'+esc(it.t)+'</button>';
+    }).join('')+'</div>';
+  }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
-    var PTI=ptItems();
+    var PREP=ptPrep(), DAY=ptDay();
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
       var day=m.w?c.rate:0,prep=c.alloc[i],pay=day+prep;
@@ -4268,31 +4282,27 @@
           'placeholder="이름 고르기" autocomplete="off" '+
           'style="width:96px;padding:4px 6px'+(m.pid?'':';border-color:var(--warn)')+'" '+
           (m.pid?'title="명부: '+esc(personName(m.pid)||'')+'"':'title="명부에 없는 이름입니다"')+dis+'></td>'+
-        '<td><textarea data-f="p" data-i="'+i+'" class="desc" rows="2"'+dis+'>'+esc(m.p)+'</textarea></td>'+
-        '<td><input data-f="r" data-i="'+i+'" value="'+esc(m.r)+'" style="min-width:140px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
+        '<td>'+togs('prep',PREP,m,i,dis)+
+          /* 옛 정산에 손으로 적어 둔 글은 지우지 않는다. 그게 그때의 근거다. */
+          (m.p?'<div class="oldtxt">'+esc(m.p)+'</div>':'')+'</td>'+
+        '<td>'+togs('day',DAY,m,i,dis)+
+          (m.r?'<div class="oldtxt">'+esc(m.r)+'</div>':'')+'</td>'+
         '<td style="text-align:center"><input type="checkbox" class="chk" data-f="w" data-i="'+i+'"'+(m.w?' checked':'')+dis+'></td>'+
         /* 11·7·3·0 은 기준이지 전부가 아니다. 역할이 그 넷에 안 떨어지는
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
-        '<td style="text-align:center;white-space:nowrap">'+
-          PTI.map(function(it,k){
-            var on=(m.picks||[]).indexOf(k)>=0;
-            return '<label class="ptchip" title="'+esc(it.t+(it.d?' — '+it.d:''))+'">'+
-              '<input type="checkbox" data-pti="'+k+'" data-i="'+i+'"'+(on?' checked':'')+dis+'>'+
-              '<span>'+esc(it.w)+'</span></label>';
-          }).join('')+
-          '<b class="ptsum" data-ptsum="'+i+'">'+memberPt(m)+'</b></td>'+
+        '<td style="text-align:center"><b class="ptsum" data-ptsum="'+i+'">'+memberPt(m)+'</b></td>'+
+        '<td><input data-f="memo" data-i="'+i+'" value="'+esc(m.memo||'')+'" '+
+          'placeholder="적을 게 있으면" style="min-width:120px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num'+(c.capped[i]?' capped':'')+'">'+(prep?prep.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
     }).join('');
     var ptLegend='<p class="hint" style="margin:10px 0 0">'+
-      '<b>기여 항목</b> — 한 사람이 여러 개를 체크할 수 있고, 체크한 점수의 합이 그 사람 점수입니다.<br>'+
-      PTI.map(function(it){
-        return '<b>'+esc(it.w)+'</b> '+esc(it.t)+(it.d?' <span style="color:var(--zero)">'+esc(it.d)+'</span>':'');
-      }).join('<br>')+
-      '</p>';
+      '한 일을 <b>눌러서</b> 켜주세요. 누른 수만큼 점수가 올라가고, '+
+      '<b>점수가 가장 높은 사람이 1인 상한</b>을 받습니다. 나머지는 그 비율대로 받습니다.<br>'+
+      '항목은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
     if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'명','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
@@ -4345,9 +4355,10 @@
           chain.map(function(r,i){return '<div'+(i===chain.length-1?' class="tot"':'')+'><span class="lab">'+r[0]+'</span><span>'+r[1]+'</span></div>';}).join('')+
         '</div></section>'+
         '<section class="card"><h2>정산표</h2><div class="scroll"><table>'+
-          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">당일</th><th style="text-align:center">기여 · 합</th>'+
+          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">당일</th>'+
+          '<th style="text-align:center">점수</th><th>비고</th>'+
           '<th class="num">당일 일급</th><th class="num">준비 사례비</th><th class="num">지급액</th><th></th></tr></thead>'+
-          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="5">합계 · 당일 근무 '+c.workedCount+'명</td>'+
+          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="6">합계 · 당일 근무 '+c.workedCount+'명</td>'+
           '<td class="num">'+c.dayTotal.toLocaleString('ko-KR')+'</td><td class="num">'+c.prepTotal.toLocaleString('ko-KR')+'</td>'+
           '<td class="num">'+c.payTotal.toLocaleString('ko-KR')+'</td><td></td></tr></tfoot></table></div>'+
           ptLegend+
@@ -5157,36 +5168,55 @@
      「이 사람은 7점」은 설명이 안 된다. 왜 7인지 아무도 모르고, 나중에
      보면 적은 사람도 모른다. 한 일에 체크하고 그 합이 점수가 되면
      숫자가 스스로 설명한다.
-     「점수|이름|설명」 한 줄에 하나. 설정에서 고친다.
-     가름쇠는 | 다. 가운뎃점(·)은 이름 안에도 들어간다 — 「섭외·계약·행정」. */
-  var PTITEMS_DEF=[
-    '5|핵심 사전준비|기획·대본·큐시트 등 행사의 뼈대를 만든 일',
-    '4|제작|영상·디자인·송출화면 등 결과물을 만든 일',
-    '3|섭외·계약·행정|대관·견적·계약·정산 서류',
-    '2|현장 운영|당일 진행·세팅·접수',
-    '1|단순 지원|심부름·초기 조사'
+     빈칸을 주면 안 적는다. 안 적으면 왜 그 점수인지가 사라지고,
+     나중에 보면 적은 사람도 모른다. 누르는 것으로 바꾼다.
+     한 번 누를 때마다 그 항목 점수만큼 올라간다.
+
+     「점수|이름」 한 줄에 하나. 가름쇠는 | 다 — 가운뎃점은 이름 안에도
+     들어간다(「섭외·계약」). 설정에서 고친다. 내가 정한 목록이 이 회사
+     일과 안 맞을 수 있고, 그때 코드를 고치게 하면 안 된다. */
+  var PTPREP_DEF=[
+    '1|기획·구성','1|대본·큐시트','1|디자인·영상 제작','1|송출화면 제작',
+    '1|섭외·계약','1|대관·견적','1|홍보','1|소모품 구매·발주',
+    '1|사전 테스트','1|정산·행정'
   ];
-  function ptItems(){
-    return cfgList('ptitems',PTITEMS_DEF).map(function(line){
+  var PTDAY_DEF=[
+    '1|공연 연출','1|음향','1|영상·LED 운영','1|관객 접수',
+    '1|현장 진행','1|촬영','1|설치·철수'
+  ];
+  function ptList(k,def){
+    return cfgList(k,def).map(function(line){
       var a=String(line||'').split('|');
-      return {w:num(a[0],0), t:String(a[1]||'').trim(), d:String(a[2]||'').trim()};
+      return {w:num(a[0],1), t:String(a[1]||'').trim()};
     }).filter(function(it){ return it.t; });
   }
-  /* 체크한 항목이 있으면 그 합이 점수다. 없으면 예전처럼 적어 둔 숫자를
-     쓴다 — 지난 정산을 지금 규칙으로 다시 계산하면 안 된다. */
+  function ptPrep(){ return ptList('ptprep',PTPREP_DEF); }
+  function ptDay(){  return ptList('ptday', PTDAY_DEF); }
+  /* 눌러 둔 항목을 글로. 내보내기와 옛 화면이 글을 기대한다. */
+  function togText(kind,m){
+    var L=kind==='day'?ptDay():ptPrep();
+    return ((m&&m[kind])||[]).map(function(i){ return (L[i]&&L[i].t)||''; })
+      .filter(Boolean).join(', ');
+  }
+  function sumPicks(list,picks){
+    return (picks||[]).reduce(function(a,i){ return a+((list[i]&&list[i].w)||0); },0);
+  }
+  /* 누른 게 있으면 그 합이 점수다. 하나도 안 눌렀으면 예전처럼 적어 둔
+     숫자를 쓴다 — 지난 정산을 지금 규칙으로 다시 계산하면 안 된다. */
   function memberPt(m){
-    if(m&&m.picks&&m.picks.length){
-      var IT=ptItems();
-      return m.picks.reduce(function(a,i){ return a+((IT[i]&&IT[i].w)||0); },0);
-    }
-    return num(m&&m.pt,0);
+    if(!m) return 0;
+    var a=(m.prep||[]).length, b=(m.day||[]).length;
+    if(a||b) return sumPicks(ptPrep(),m.prep)+sumPicks(ptDay(),m.day);
+    return num(m.pt,0);
   }
   var LISTS=[
     {k:'accounts', t:'계정과목', d:ACCOUNTS_DEF, h:'지출결의서에서 고르는 항목입니다.'},
     {k:'biz',      t:'사업 구분', d:BIZ_DEF,     h:'장부와 행사별 수지를 가르는 기준입니다. 회계 시트의 사업명과 같게 두세요.'},
     {k:'payway',   t:'지급 수단', d:PAYWAY_DEF,  h:'장부에 적는 결제 방법입니다.'},
-    {k:'ptitems',  t:'기여 항목',  d:PTITEMS_DEF,
-     h:'정산에서 체크하는 항목입니다. 「점수|이름|설명」 한 줄에 하나 — 가름쇠는 | 입니다. 체크한 항목의 합이 그 사람 점수가 됩니다.'}
+    {k:'ptprep',   t:'사전 준비 항목', d:PTPREP_DEF,
+     h:'정산에서 누르는 단추입니다. 「점수|이름」 한 줄에 하나 — 가름쇠는 | 입니다. 누른 항목의 합이 그 사람 점수가 됩니다.'},
+    {k:'ptday',    t:'공연 당일 역할', d:PTDAY_DEF,
+     h:'당일 역할 단추입니다. 같은 모양으로 적습니다. 당일 일급과는 별개로 점수에 더해집니다.'}
   ];
   var SLACK_EV=[
     ['ask','결재 요청'],['ok','결재 승인'],['no','결재 반려'],
@@ -5957,6 +5987,24 @@
     var ev=S.sel&&S.events[S.sel];
     if((el=t.closest('[data-del]'))&&ev){ ev.members.splice(+el.dataset.del,1); touch('ev',ev.id); render(); return; }
     if(t.id==='addRow'&&ev){ ev.members=(ev.members||[]).concat([{n:'',pid:'',p:'',r:'',w:false,pt:0}]); touch('ev',ev.id); render(); return; }
+    if((el=t.closest('[data-tog]'))&&ev){
+      var ti=+el.dataset.i, kind=el.dataset.tog, tk=+el.dataset.tk;
+      var mb=ev.members&&ev.members[ti]; if(!mb) return;
+      var arr=(mb[kind]||[]).slice(), at=arr.indexOf(tk);
+      if(at<0) arr.push(tk); else arr.splice(at,1);
+      arr.sort(function(a,b){return a-b;});
+      mb[kind]=arr;
+      touch('ev',ev.id);
+      /* 누른 단추 하나와 숫자만 고친다. 통째로 다시 그리면 방금 누른
+         자리가 사라지고, 연달아 누르기가 힘들어진다. */
+      var onNow=at<0;
+      el.classList.toggle('on',onNow);
+      el.setAttribute('aria-pressed',onNow?'true':'false');
+      var sb=document.querySelector('[data-ptsum="'+ti+'"]');
+      if(sb) sb.textContent=memberPt(mb);
+      softNumbers(ev);
+      return;
+    }
     if(t.id==='copy'&&ev) return copyTable(ev);
     if(ev&&!saving){
       var map={mDirect:['mode','direct'],mCalc:['mode','calc'],sOpex:['wageSrc','opex'],sFund:['wageSrc','fund'],
@@ -6088,22 +6136,6 @@
     if(t.id==='evPayOn'){ S.payOn=t.value; return; }
     if(t.id==='payOn'){ S.payOn=t.value; return; }
     var ev=S.sel&&S.events[S.sel]; if(!ev)return;
-    /* 기여 항목 체크. 체크할 때마다 통째로 다시 그리면 칸이 새로 만들어져
-       방금 누른 자리가 사라진다. 합과 금액만 고친다. */
-    if(t.dataset&&t.dataset.pti!==undefined){
-      var mi=+t.dataset.i, k=+t.dataset.pti, mm2=ev.members&&ev.members[mi];
-      if(!mm2) return;
-      var pk=(mm2.picks||[]).slice(), at=pk.indexOf(k);
-      if(t.checked){ if(at<0) pk.push(k); } else if(at>=0) pk.splice(at,1);
-      pk.sort(function(a,b){return a-b;});
-      mm2.picks=pk;
-      delete mm2.pt;        /* 체크로 넘어왔으면 옛 숫자는 더 이상 쓰지 않는다 */
-      touch('ev',ev.id);
-      var box=document.querySelector('[data-ptsum="'+mi+'"]');
-      if(box) box.textContent=memberPt(mm2);
-      softNumbers(ev);
-      return;
-    }
     if(t.dataset&&t.dataset.f!==undefined){
       var i=+t.dataset.i,fl=t.dataset.f;
       if(fl==='w')ev.members[i].w=t.checked;
@@ -6242,9 +6274,9 @@
       var m=ev.members&&ev.members[i]; if(!m)return;
       var sb=tr.querySelector('[data-ptsum]'); if(sb) sb.textContent=memberPt(m);
       var day=m.w?c.rate:0,prep=c.alloc[i]||0;
-      if(tr.cells[5])tr.cells[5].textContent=day?day.toLocaleString('ko-KR'):'—';
-      if(tr.cells[6])tr.cells[6].textContent=prep?prep.toLocaleString('ko-KR'):'—';
-      if(tr.cells[7])tr.cells[7].textContent=(day+prep).toLocaleString('ko-KR');
+      if(tr.cells[6])tr.cells[6].textContent=day?day.toLocaleString('ko-KR'):'—';
+      if(tr.cells[7])tr.cells[7].textContent=prep?prep.toLocaleString('ko-KR'):'—';
+      if(tr.cells[8])tr.cells[8].textContent=(day+prep).toLocaleString('ko-KR');
     });
   }
 
@@ -6408,12 +6440,13 @@
   function copyTable(ev){
     var c=compute(ev);
     var L=[(ev.name||'')+' 팀 사례비 정산표',
-      ['팀원','사전 준비 및 실제 기여','공연 당일 역할','기여 점수','당일 일급','준비 사례비','지급액'].join('\t')];
+      ['팀원','사전 준비 및 실제 기여','공연 당일 역할','점수','비고','당일 일급','준비 사례비','지급액'].join('\t')];
     (ev.members||[]).forEach(function(m,i){
       var d=m.w?c.rate:0;
-      L.push([m.n,m.p,m.r,memberPt(m),d,c.alloc[i],d+c.alloc[i]].join('\t'));
+      L.push([m.n, togText('prep',m)||m.p||'', togText('day',m)||m.r||'',
+              memberPt(m), m.memo||'', d, c.alloc[i], d+c.alloc[i]].join('\t'));
     });
-    L.push(['합계','당일 근무 '+c.workedCount+'명','',c.ptSum,c.dayTotal,c.prepTotal,c.payTotal].join('\t'),'',
+    L.push(['합계','당일 근무 '+c.workedCount+'명','',c.ptSum,'',c.dayTotal,c.prepTotal,c.payTotal].join('\t'),'',
       ['정산 기준액',c.net].join('\t'),['사례비 배정 비율',(c.ratio*100)+'%'].join('\t'),
       ['사례비 예산',c.fundBase].join('\t'),['1인당 당일 일급',c.rate].join('\t'),['지급 후 잔액',c.leftover].join('\t'));
     put(L.join('\n'),'표를 복사했습니다');
