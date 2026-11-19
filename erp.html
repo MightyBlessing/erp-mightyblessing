@@ -272,7 +272,11 @@
   .tog:hover:not(:disabled){border-color:var(--accent); color:var(--ink)}
   .tog.on{background:var(--accent-soft); border-color:var(--accent); color:var(--accent-ink); font-weight:600}
   .tog:disabled{cursor:default; opacity:.65}
+  .tog.addtog{border-style:dashed; font-weight:700; padding:3px 9px}
   .ptsum{font-family:var(--font-num); font-size:15px; font-weight:700}
+  .dsel{width:54px; padding:4px 6px; font-size:12px; text-align:center}
+  .fixin{width:92px; padding:4px 6px; font-size:12.5px; text-align:right; font-family:var(--font-num)}
+  .fixin::placeholder{color:var(--zero); font-weight:400}
   .oldtxt{margin-top:5px; font-size:11.5px; color:var(--zero); white-space:pre-wrap}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
@@ -1005,7 +1009,8 @@
     var net=ev.mode==='calc'?(num(ev.rev)-num(ev.opex)-num(ev.tax)):num(ev.net);
     var rate=num(ev.rate,150000),ratio=num(ev.ratio,50)/100,cap=num(ev.cap,300000),unit=num(ev.unit,10000)||1;
     var ms=ev.members||[];
-    var workedCount=ms.filter(function(m){return m.w;}).length;
+    var dayList=ms.map(memberDays);
+    var workedCount=dayList.reduce(function(a,b){return a+b;},0);   /* 사람 수가 아니라 일수의 합 */
     var dayTotal=rate*workedCount, fundBase=Math.round(net*ratio);
     /* 기본: 사례비 예산 안에 당일 일급이 포함된다. 'opex'로 둔 행사만 운영비에서 따로 나간다. */
     var pool=ev.wageSrc==='opex'?fundBase:fundBase-dayTotal; if(pool<0)pool=0;
@@ -1019,16 +1024,28 @@
        예산을 다 안 쓰는 게 보통이다. 남는 돈은 운영통장으로 이월된다.
        「예산을 남김없이 나눈다」가 아니라 「기여만큼 준다」가 규칙이다. */
     var alloc=ms.map(function(){return 0;}),capped=ms.map(function(){return false;});
+    var fixed=ms.map(memberFix);
+
+    /* 대표가 직접 적은 금액이 먼저다. 그 돈을 떼고 남은 것으로 나머지를
+       나눈다. 계산이 사람의 판단을 덮으면 안 된다. */
+    var fixSum=0;
+    fixed.forEach(function(v,i){ if(v!==null){ alloc[i]=v; fixSum+=v; } });
+    var poolLeft=pool-fixSum; if(poolLeft<0) poolLeft=0;
+
     var maxPt=0;
-    ms.forEach(function(m){ var v=memberPt(m); if(v>maxPt) maxPt=v; });
+    ms.forEach(function(m,i){ if(fixed[i]!==null) return;
+      var v=memberPt(m); if(v>maxPt) maxPt=v; });
+    var want=0;
     if(maxPt>0){
-      var raw=ms.map(function(m){
+      var raw=ms.map(function(m,i){
+        if(fixed[i]!==null) return 0;
         var v=memberPt(m);
         return v>0 ? cap*(v/maxPt) : 0;
       });
-      var want=raw.reduce(function(a,b){return a+b;},0);
-      var shrink=(want>pool&&want>0)?(pool/want):1;
+      want=raw.reduce(function(a,b){return a+b;},0);
+      var shrink=(want>poolLeft&&want>0)?(poolLeft/want):1;
       ms.forEach(function(m,i){
+        if(fixed[i]!==null) return;
         if(!(memberPt(m)>0)){ alloc[i]=0; return; }
         var v=Math.floor((raw[i]*shrink)/unit)*unit;
         if(v>cap) v=cap;
@@ -1037,15 +1054,11 @@
         if(shrink>=1 && v>=cap) capped[i]=true;
       });
     }
-    var shrunk=(function(){
-      if(maxPt<=0) return false;
-      var want=ms.reduce(function(a,m){
-        var v=memberPt(m); return a+(v>0?cap*(v/maxPt):0); },0);
-      return want>pool;
-    })();
+    var shrunk=(maxPt>0&&want>poolLeft);
     var prepTotal=alloc.reduce(function(a,b){return a+b;},0);
     return {net:net,rate:rate,ratio:ratio,cap:cap,workedCount:workedCount,dayTotal:dayTotal,fundBase:fundBase,
-      pool:pool,alloc:alloc,capped:capped,anyCap:capped.some(Boolean),shrunk:shrunk,
+      pool:pool,poolLeft:poolLeft,fixSum:fixSum,fixed:fixed,days:dayList,
+      alloc:alloc,capped:capped,anyCap:capped.some(Boolean),shrunk:shrunk,want:want,
       maxPt:maxPt,ptSum:ms.reduce(function(a,m){return a+memberPt(m);},0),prepTotal:prepTotal,
       leftover:pool-prepTotal,payTotal:dayTotal+prepTotal};
   }
@@ -1308,12 +1321,13 @@
       var d=n.dataset||{};
       if(d.apk) return '[data-apk="'+d.apk+'"]';
       if(d.ei!=null&&d.ef) return '[data-ei="'+d.ei+'"][data-ef="'+d.ef+'"]';
+      if(d.i!=null&&d.f) return '[data-i="'+d.i+'"][data-f="'+d.f+'"]';
     }catch(e){}
     return '';
   }
   function render(){
     var act=document.activeElement, keep=null;
-    if(act&&(act.tagName==='INPUT'||act.tagName==='TEXTAREA')&&act.type!=='file'){
+    if(act&&(act.tagName==='INPUT'||act.tagName==='TEXTAREA'||act.tagName==='SELECT')&&act.type!=='file'){
       var k=fieldKey(act);
       if(k){
         keep={k:k, v:act.value, s:null, e:null};
@@ -3903,7 +3917,7 @@
         var on=evPaidOn(ev);
         if(ym&&String(on).slice(0,7)!==ym) return;
         if(!c) c=compute(ev);
-        var day=m.w?c.rate:0, prep=num(c.alloc[i],0);
+        var day=memberDays(m)*c.rate, prep=num(c.alloc[i],0);
         if(day+prep<=0) return;
         out.push({evId:k, evName:ev.name||'(이름 없음)', on:on,
                   day:day, prep:prep, amt:day+prep, capped:!!c.capped[i],
@@ -4260,14 +4274,18 @@
       return '<button type="button" class="tog'+(hit?' on':'')+'" '+
         'data-tog="'+kind+'" data-tk="'+k+'" data-i="'+i+'"'+(dis?' disabled':'')+
         ' aria-pressed="'+(hit?'true':'false')+'">'+esc(it.t)+'</button>';
-    }).join('')+'</div>';
+    }).join('')+
+    /* 목록에 없는 일은 늘 생긴다. 그때 설정 화면까지 가게 하면 그냥
+       비고에 적고 점수에는 안 들어간다. 여기서 바로 만든다. */
+    (dis||!S.me.canEdit?'':'<button type="button" class="tog addtog" data-addtog="'+kind+'" data-i="'+i+'" title="목록에 없는 일을 더합니다">+</button>')+
+    '</div>';
   }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
     var PREP=ptPrep(), DAY=ptDay();
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
-      var day=m.w?c.rate:0,prep=c.alloc[i],pay=day+prep;
+      var day=memberDays(m)*c.rate,prep=c.alloc[i],pay=day+prep;
       return '<tr class="'+(pay===0?'off':'')+'">'+
         '<td><input data-f="n" data-i="'+i+'" list="plist" value="'+esc(m.n)+'" '+
           'placeholder="이름 고르기" autocomplete="off" '+
@@ -4278,7 +4296,10 @@
           (m.p?'<div class="oldtxt">'+esc(m.p)+'</div>':'')+'</td>'+
         '<td>'+togs('day',DAY,m,i,dis)+
           (m.r?'<div class="oldtxt">'+esc(m.r)+'</div>':'')+'</td>'+
-        '<td style="text-align:center"><input type="checkbox" class="chk" data-f="w" data-i="'+i+'"'+(m.w?' checked':'')+dis+'></td>'+
+        '<td style="text-align:center"><select class="dsel" data-f="days" data-i="'+i+'"'+dis+'>'+
+          [0,1,2,3,4,5,6,7,8,9,10].map(function(n){
+            return '<option value="'+n+'"'+(memberDays(m)===n?' selected':'')+'>'+n+'</option>';
+          }).join('')+'</select></td>'+
         /* 11·7·3·0 은 기준이지 전부가 아니다. 역할이 그 넷에 안 떨어지는
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
@@ -4286,7 +4307,12 @@
         '<td><input data-f="memo" data-i="'+i+'" value="'+esc(m.memo||'')+'" '+
           'placeholder="적을 게 있으면" style="min-width:120px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
-        '<td class="num'+(c.capped[i]?' capped':'')+'">'+(prep?prep.toLocaleString('ko-KR'):'—')+'</td>'+
+        '<td class="num'+(c.capped[i]?' capped':'')+'">'+
+          (ro
+            ? (prep?prep.toLocaleString('ko-KR'):'—')
+            : '<input class="fixin" type="number" min="0" step="10000" data-f="fix" data-i="'+i+'" '+
+              'value="'+esc(c.fixed[i]===null?'':c.fixed[i])+'" placeholder="'+esc(prep?prep.toLocaleString('ko-KR'):'0')+'">')+
+        '</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
     }).join('');
@@ -4295,7 +4321,7 @@
       '<b>점수가 가장 높은 사람이 1인 상한</b>을 받습니다. 나머지는 그 비율대로 받습니다.<br>'+
       '항목은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
-    if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'명','−'+won(c.dayTotal)]);
+    if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'일','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
     var delCtl='';
     if(writable()&&p.status==='draft'){
@@ -4346,10 +4372,10 @@
           chain.map(function(r,i){return '<div'+(i===chain.length-1?' class="tot"':'')+'><span class="lab">'+r[0]+'</span><span>'+r[1]+'</span></div>';}).join('')+
         '</div></section>'+
         '<section class="card"><h2>정산표</h2><div class="scroll"><table>'+
-          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">당일</th>'+
+          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">참가<br>일수</th>'+
           '<th style="text-align:center">점수</th><th>비고</th>'+
           '<th class="num">당일 일급</th><th class="num">준비 사례비</th><th class="num">지급액</th><th></th></tr></thead>'+
-          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="6">합계 · 당일 근무 '+c.workedCount+'명</td>'+
+          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="6">합계 · 참가 '+c.workedCount+'일</td>'+
           '<td class="num">'+c.dayTotal.toLocaleString('ko-KR')+'</td><td class="num">'+c.prepTotal.toLocaleString('ko-KR')+'</td>'+
           '<td class="num">'+c.payTotal.toLocaleString('ko-KR')+'</td><td></td></tr></tfoot></table></div>'+
           ptLegend+
@@ -4833,7 +4859,7 @@
       var c=compute(ev);
       (ev.members||[]).forEach(function(m,i){
         /* 받은 돈 = 당일 일급(근무했으면) + 준비 사례비 */
-        var amt=(m.w?c.rate:0)+num(c.alloc[i],0);
+        var amt=(memberDays(m)*c.rate)+num(c.alloc[i],0);
         if(amt<=0) return;
         out.push({pid:m.pid||'', name:(m.pid&&personName(m.pid))||String(m.n||'').trim()||'(이름 없음)',
                   evId:k, evName:ev.name||'(이름 없음)', on:on, amount:amt, role:m.r||''});
@@ -5194,6 +5220,19 @@
   }
   /* 누른 게 있으면 그 합이 점수다. 하나도 안 눌렀으면 예전처럼 적어 둔
      숫자를 쓴다 — 지난 정산을 지금 규칙으로 다시 계산하면 안 된다. */
+  /* 하루만 일하는 행사가 아니다. 설치·리허설·본공연으로 사흘을 붙어
+     있으면 일급도 사흘치다. 체크 하나로는 그걸 못 적는다. */
+  function memberDays(m){
+    if(!m) return 0;
+    if(m.days!==undefined&&m.days!==null&&m.days!=='') return Math.max(0,num(m.days,0));
+    return m.w?1:0;     /* 옛 정산은 체크 하나 = 하루 */
+  }
+  /* 대표가 기여도를 보고 직접 정한 금액. 비어 있으면 계산에 맡긴다. */
+  function memberFix(m){
+    if(!m) return null;
+    if(m.fix===undefined||m.fix===null||String(m.fix).trim()==='') return null;
+    return Math.max(0,num(m.fix,0));
+  }
   function memberPt(m){
     if(!m) return 0;
     var a=(m.prep||[]).length, b=(m.day||[]).length;
@@ -5978,6 +6017,23 @@
     var ev=S.sel&&S.events[S.sel];
     if((el=t.closest('[data-del]'))&&ev){ ev.members.splice(+el.dataset.del,1); touch('ev',ev.id); render(); return; }
     if(t.id==='addRow'&&ev){ ev.members=(ev.members||[]).concat([{n:'',pid:'',p:'',r:'',w:false,pt:0}]); touch('ev',ev.id); render(); return; }
+    if((el=t.closest('[data-addtog]'))&&ev){
+      var kind2=el.dataset.addtog, mi2=+el.dataset.i;
+      var key2=kind2==='day'?'ptday':'ptprep';
+      var def2=kind2==='day'?PTDAY_DEF:PTPREP_DEF;
+      var nm2=(window.prompt('더할 일의 이름을 적어주세요','')||'').trim();
+      if(!nm2) return;
+      if(nm2.indexOf('|')>=0) return errbar('이름에 | 는 쓸 수 없습니다');
+      var cur2=cfgList(key2,def2).slice();
+      var names2=ptList(key2,def2).map(function(x){return x.t;});
+      if(names2.indexOf(nm2)>=0) return errbar('이미 있는 항목입니다');
+      cur2.push('1|'+nm2);
+      var at2=cur2.length-1;
+      /* 만든 사람이 바로 켜진 걸 본다. 만들고 또 눌러야 하면 잊는다. */
+      var mb2=ev.members&&ev.members[mi2];
+      if(mb2){ mb2[kind2]=((mb2[kind2]||[]).concat([at2])).sort(function(a,b){return a-b;}); touch('ev',ev.id); }
+      return saveList(key2,cur2);
+    }
     if((el=t.closest('[data-tog]'))&&ev){
       var ti=+el.dataset.i, kind=el.dataset.tog, tk=+el.dataset.tk;
       var mb=ev.members&&ev.members[ti]; if(!mb) return;
@@ -6161,6 +6217,9 @@
           }
         }
       }
+      /* 일수와 금액은 표 전체(합계·계산 과정)를 바꾼다. 치는 동안에는
+         줄 안의 숫자만 고치고, 손을 떼면(change) 통째로 다시 그린다. */
+      if(fl==='days'||fl==='fix'){ softNumbers(ev); return; }
       if(fl==='w')render();
       return;
     }
@@ -6192,6 +6251,10 @@
   });
   document.addEventListener('change',function(e){
     var t=e.target;
+    /* 일수·금액은 손을 떼는 순간 합계와 계산 과정까지 맞춰 준다. */
+    if(t.dataset&&(t.dataset.f==='days'||t.dataset.f==='fix')&&S.sel&&S.events[S.sel]){
+      return render();
+    }
     if(t.id==='sealFile') return onSealFile(t.files&&t.files[0]);
     if(t.id==='nform'&&S.newPanel){
       S.newPanel.form=t.value;
@@ -6264,7 +6327,7 @@
     Array.prototype.forEach.call(tb.rows,function(tr,i){
       var m=ev.members&&ev.members[i]; if(!m)return;
       var sb=tr.querySelector('[data-ptsum]'); if(sb) sb.textContent=memberPt(m);
-      var day=m.w?c.rate:0,prep=c.alloc[i]||0;
+      var day=memberDays(m)*c.rate,prep=c.alloc[i]||0;
       if(tr.cells[6])tr.cells[6].textContent=day?day.toLocaleString('ko-KR'):'—';
       if(tr.cells[7])tr.cells[7].textContent=prep?prep.toLocaleString('ko-KR'):'—';
       if(tr.cells[8])tr.cells[8].textContent=(day+prep).toLocaleString('ko-KR');
@@ -6377,7 +6440,7 @@
          지급명세서와 어긋난다 — 신고 서류와 통장 잔액이 안 맞는다. */
       var cc=compute(ev), txTot=0;
       (ev.members||[]).forEach(function(m,i){
-        var a=(m.w?cc.rate:0)+num(cc.alloc[i],0);
+        var a=(memberDays(m)*cc.rate)+num(cc.alloc[i],0);
         if(a<=0) return;
         var t=taxOf(a); txTot+=t.inc+t.loc;
       });
@@ -6433,7 +6496,7 @@
     var L=[(ev.name||'')+' 팀 사례비 정산표',
       ['팀원','사전 준비 및 실제 기여','공연 당일 역할','점수','비고','당일 일급','준비 사례비','지급액'].join('\t')];
     (ev.members||[]).forEach(function(m,i){
-      var d=m.w?c.rate:0;
+      var d=memberDays(m)*c.rate;
       L.push([m.n, togText('prep',m)||m.p||'', togText('day',m)||m.r||'',
               memberPt(m), m.memo||'', d, c.alloc[i], d+c.alloc[i]].join('\t'));
     });
