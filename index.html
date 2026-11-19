@@ -275,6 +275,11 @@
   .rowlink:hover td:last-child{border-top-right-radius:8px; border-bottom-right-radius:8px}
   .desc{min-width:180px; font-size:12.5px; color:var(--muted); line-height:1.45}
   .ptsel{width:60px; padding:4px 6px; font-size:12px}
+  .ptchip{display:inline-flex; align-items:center; gap:2px; margin:0 3px 0 0; cursor:pointer}
+  .ptchip input{margin:0}
+  .ptchip span{font-size:11.5px; color:var(--muted); font-family:var(--font-num)}
+  .ptchip input:checked + span{color:var(--accent-ink); font-weight:700}
+  .ptsum{margin-left:6px; font-family:var(--font-num); font-size:13px}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
 
@@ -1021,16 +1026,16 @@
        「예산을 남김없이 나눈다」가 아니라 「기여만큼 준다」가 규칙이다. */
     var alloc=ms.map(function(){return 0;}),capped=ms.map(function(){return false;});
     var maxPt=0;
-    ms.forEach(function(m){ var v=num(m.pt,0); if(v>maxPt) maxPt=v; });
+    ms.forEach(function(m){ var v=memberPt(m); if(v>maxPt) maxPt=v; });
     if(maxPt>0){
       var raw=ms.map(function(m){
-        var v=num(m.pt,0);
+        var v=memberPt(m);
         return v>0 ? cap*(v/maxPt) : 0;
       });
       var want=raw.reduce(function(a,b){return a+b;},0);
       var shrink=(want>pool&&want>0)?(pool/want):1;
       ms.forEach(function(m,i){
-        if(!(num(m.pt,0)>0)){ alloc[i]=0; return; }
+        if(!(memberPt(m)>0)){ alloc[i]=0; return; }
         var v=Math.floor((raw[i]*shrink)/unit)*unit;
         if(v>cap) v=cap;
         alloc[i]=v;
@@ -1041,13 +1046,13 @@
     var shrunk=(function(){
       if(maxPt<=0) return false;
       var want=ms.reduce(function(a,m){
-        var v=num(m.pt,0); return a+(v>0?cap*(v/maxPt):0); },0);
+        var v=memberPt(m); return a+(v>0?cap*(v/maxPt):0); },0);
       return want>pool;
     })();
     var prepTotal=alloc.reduce(function(a,b){return a+b;},0);
     return {net:net,rate:rate,ratio:ratio,cap:cap,workedCount:workedCount,dayTotal:dayTotal,fundBase:fundBase,
       pool:pool,alloc:alloc,capped:capped,anyCap:capped.some(Boolean),shrunk:shrunk,
-      maxPt:maxPt,ptSum:ms.reduce(function(a,m){return a+num(m.pt,0);},0),prepTotal:prepTotal,
+      maxPt:maxPt,ptSum:ms.reduce(function(a,m){return a+memberPt(m);},0),prepTotal:prepTotal,
       leftover:pool-prepTotal,payTotal:dayTotal+prepTotal};
   }
   function accountingUids(){return Object.keys(S.roles).filter(function(u){return S.roles[u]==='accounting';});}
@@ -3908,7 +3913,7 @@
         if(day+prep<=0) return;
         out.push({evId:k, evName:ev.name||'(이름 없음)', on:on,
                   day:day, prep:prep, amt:day+prep, capped:!!c.capped[i],
-                  pt:num(m.pt,0), role:m.r||'',
+                  pt:memberPt(m), role:m.r||'',
                   paid:progress(ev).status==='paid'});
       });
     });
@@ -4254,6 +4259,7 @@
   }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
+    var PTI=ptItems();
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
       var day=m.w?c.rate:0,prep=c.alloc[i],pay=day+prep;
@@ -4268,13 +4274,25 @@
         /* 11·7·3·0 은 기준이지 전부가 아니다. 역할이 그 넷에 안 떨어지는
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
-        '<td style="text-align:center"><input type="number" min="0" step="1" '+
-          'data-f="pt" data-i="'+i+'" class="ptsel" list="ptvals" value="'+esc(num(m.pt,0))+'"'+dis+'></td>'+
+        '<td style="text-align:center;white-space:nowrap">'+
+          PTI.map(function(it,k){
+            var on=(m.picks||[]).indexOf(k)>=0;
+            return '<label class="ptchip" title="'+esc(it.t+(it.d?' — '+it.d:''))+'">'+
+              '<input type="checkbox" data-pti="'+k+'" data-i="'+i+'"'+(on?' checked':'')+dis+'>'+
+              '<span>'+esc(it.w)+'</span></label>';
+          }).join('')+
+          '<b class="ptsum" data-ptsum="'+i+'">'+memberPt(m)+'</b></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num'+(c.capped[i]?' capped':'')+'">'+(prep?prep.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
     }).join('');
+    var ptLegend='<p class="hint" style="margin:10px 0 0">'+
+      '<b>기여 항목</b> — 한 사람이 여러 개를 체크할 수 있고, 체크한 점수의 합이 그 사람 점수입니다.<br>'+
+      PTI.map(function(it){
+        return '<b>'+esc(it.w)+'</b> '+esc(it.t)+(it.d?' <span style="color:var(--zero)">'+esc(it.d)+'</span>':'');
+      }).join('<br>')+
+      '</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
     if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'명','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
@@ -4327,11 +4345,12 @@
           chain.map(function(r,i){return '<div'+(i===chain.length-1?' class="tot"':'')+'><span class="lab">'+r[0]+'</span><span>'+r[1]+'</span></div>';}).join('')+
         '</div></section>'+
         '<section class="card"><h2>정산표</h2><div class="scroll"><table>'+
-          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">당일</th><th style="text-align:center">P</th>'+
+          '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">당일</th><th style="text-align:center">기여 · 합</th>'+
           '<th class="num">당일 일급</th><th class="num">준비 사례비</th><th class="num">지급액</th><th></th></tr></thead>'+
           '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="5">합계 · 당일 근무 '+c.workedCount+'명</td>'+
           '<td class="num">'+c.dayTotal.toLocaleString('ko-KR')+'</td><td class="num">'+c.prepTotal.toLocaleString('ko-KR')+'</td>'+
           '<td class="num">'+c.payTotal.toLocaleString('ko-KR')+'</td><td></td></tr></tfoot></table></div>'+
+          ptLegend+
           '<div class="actions" style="margin-top:14px">'+(ro?'':'<button class="btn" id="addRow">+ 팀원 추가</button>')+
             '<button class="btn primary" id="copy">표 복사</button></div>'+
           '<div class="base">'+[['정산 기준액',won(c.net)],['사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)],
@@ -5134,10 +5153,40 @@
   /* ─── 시스템 설정 ───
      바뀌는 값은 코드가 아니라 여기 있어야 한다. 계정과목 하나 늘릴 때마다
      개발자를 찾게 두면, 결국 「기타」로 몰아넣고 장부가 무뎌진다. */
+  /* ─── 기여 항목 ───
+     「이 사람은 7점」은 설명이 안 된다. 왜 7인지 아무도 모르고, 나중에
+     보면 적은 사람도 모른다. 한 일에 체크하고 그 합이 점수가 되면
+     숫자가 스스로 설명한다.
+     「점수|이름|설명」 한 줄에 하나. 설정에서 고친다.
+     가름쇠는 | 다. 가운뎃점(·)은 이름 안에도 들어간다 — 「섭외·계약·행정」. */
+  var PTITEMS_DEF=[
+    '5|핵심 사전준비|기획·대본·큐시트 등 행사의 뼈대를 만든 일',
+    '4|제작|영상·디자인·송출화면 등 결과물을 만든 일',
+    '3|섭외·계약·행정|대관·견적·계약·정산 서류',
+    '2|현장 운영|당일 진행·세팅·접수',
+    '1|단순 지원|심부름·초기 조사'
+  ];
+  function ptItems(){
+    return cfgList('ptitems',PTITEMS_DEF).map(function(line){
+      var a=String(line||'').split('|');
+      return {w:num(a[0],0), t:String(a[1]||'').trim(), d:String(a[2]||'').trim()};
+    }).filter(function(it){ return it.t; });
+  }
+  /* 체크한 항목이 있으면 그 합이 점수다. 없으면 예전처럼 적어 둔 숫자를
+     쓴다 — 지난 정산을 지금 규칙으로 다시 계산하면 안 된다. */
+  function memberPt(m){
+    if(m&&m.picks&&m.picks.length){
+      var IT=ptItems();
+      return m.picks.reduce(function(a,i){ return a+((IT[i]&&IT[i].w)||0); },0);
+    }
+    return num(m&&m.pt,0);
+  }
   var LISTS=[
     {k:'accounts', t:'계정과목', d:ACCOUNTS_DEF, h:'지출결의서에서 고르는 항목입니다.'},
     {k:'biz',      t:'사업 구분', d:BIZ_DEF,     h:'장부와 행사별 수지를 가르는 기준입니다. 회계 시트의 사업명과 같게 두세요.'},
-    {k:'payway',   t:'지급 수단', d:PAYWAY_DEF,  h:'장부에 적는 결제 방법입니다.'}
+    {k:'payway',   t:'지급 수단', d:PAYWAY_DEF,  h:'장부에 적는 결제 방법입니다.'},
+    {k:'ptitems',  t:'기여 항목',  d:PTITEMS_DEF,
+     h:'정산에서 체크하는 항목입니다. 「점수|이름|설명」 한 줄에 하나 — 가름쇠는 | 입니다. 체크한 항목의 합이 그 사람 점수가 됩니다.'}
   ];
   var SLACK_EV=[
     ['ask','결재 요청'],['ok','결재 승인'],['no','결재 반려'],
@@ -6039,6 +6088,22 @@
     if(t.id==='evPayOn'){ S.payOn=t.value; return; }
     if(t.id==='payOn'){ S.payOn=t.value; return; }
     var ev=S.sel&&S.events[S.sel]; if(!ev)return;
+    /* 기여 항목 체크. 체크할 때마다 통째로 다시 그리면 칸이 새로 만들어져
+       방금 누른 자리가 사라진다. 합과 금액만 고친다. */
+    if(t.dataset&&t.dataset.pti!==undefined){
+      var mi=+t.dataset.i, k=+t.dataset.pti, mm2=ev.members&&ev.members[mi];
+      if(!mm2) return;
+      var pk=(mm2.picks||[]).slice(), at=pk.indexOf(k);
+      if(t.checked){ if(at<0) pk.push(k); } else if(at>=0) pk.splice(at,1);
+      pk.sort(function(a,b){return a-b;});
+      mm2.picks=pk;
+      delete mm2.pt;        /* 체크로 넘어왔으면 옛 숫자는 더 이상 쓰지 않는다 */
+      touch('ev',ev.id);
+      var box=document.querySelector('[data-ptsum="'+mi+'"]');
+      if(box) box.textContent=memberPt(mm2);
+      softNumbers(ev);
+      return;
+    }
     if(t.dataset&&t.dataset.f!==undefined){
       var i=+t.dataset.i,fl=t.dataset.f;
       if(fl==='w')ev.members[i].w=t.checked;
@@ -6073,9 +6138,6 @@
           }
         }
       }
-      /* 포인트는 치는 중이다. 통째로 다시 그리면 칸이 새로 만들어진다.
-         배분 금액만 고쳐 준다. 근무 체크는 한 번에 끝나니 그대로 둔다. */
-      if(fl==='pt'){ softNumbers(ev); return; }
       if(fl==='w')render();
       return;
     }
@@ -6178,6 +6240,7 @@
     var c=compute(ev),tb=document.querySelector('tbody'); if(!tb)return;
     Array.prototype.forEach.call(tb.rows,function(tr,i){
       var m=ev.members&&ev.members[i]; if(!m)return;
+      var sb=tr.querySelector('[data-ptsum]'); if(sb) sb.textContent=memberPt(m);
       var day=m.w?c.rate:0,prep=c.alloc[i]||0;
       if(tr.cells[5])tr.cells[5].textContent=day?day.toLocaleString('ko-KR'):'—';
       if(tr.cells[6])tr.cells[6].textContent=prep?prep.toLocaleString('ko-KR'):'—';
@@ -6345,9 +6408,12 @@
   function copyTable(ev){
     var c=compute(ev);
     var L=[(ev.name||'')+' 팀 사례비 정산표',
-      ['팀원','사전 준비 및 실제 기여','공연 당일 역할','당일 일급','준비 사례비','지급액'].join('\t')];
-    (ev.members||[]).forEach(function(m,i){var d=m.w?c.rate:0;L.push([m.n,m.p,m.r,d,c.alloc[i],d+c.alloc[i]].join('\t'));});
-    L.push(['합계','당일 근무 '+c.workedCount+'명','',c.dayTotal,c.prepTotal,c.payTotal].join('\t'),'',
+      ['팀원','사전 준비 및 실제 기여','공연 당일 역할','기여 점수','당일 일급','준비 사례비','지급액'].join('\t')];
+    (ev.members||[]).forEach(function(m,i){
+      var d=m.w?c.rate:0;
+      L.push([m.n,m.p,m.r,memberPt(m),d,c.alloc[i],d+c.alloc[i]].join('\t'));
+    });
+    L.push(['합계','당일 근무 '+c.workedCount+'명','',c.ptSum,c.dayTotal,c.prepTotal,c.payTotal].join('\t'),'',
       ['정산 기준액',c.net].join('\t'),['사례비 배정 비율',(c.ratio*100)+'%'].join('\t'),
       ['사례비 예산',c.fundBase].join('\t'),['1인당 당일 일급',c.rate].join('\t'),['지급 후 잔액',c.leftover].join('\t'));
     put(L.join('\n'),'표를 복사했습니다');
