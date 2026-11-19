@@ -400,6 +400,7 @@
 
 <div id="printroot" aria-hidden="true"></div>
 <datalist id="plist"></datalist>
+<datalist id="ptvals"><option value="11"></option><option value="7"></option><option value="3"></option><option value="0"></option></datalist>
 <datalist id="parties"></datalist>
 
 <div class="shell">
@@ -4243,8 +4244,11 @@
         '<td><textarea data-f="p" data-i="'+i+'" class="desc" rows="2"'+dis+'>'+esc(m.p)+'</textarea></td>'+
         '<td><input data-f="r" data-i="'+i+'" value="'+esc(m.r)+'" style="min-width:140px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td style="text-align:center"><input type="checkbox" class="chk" data-f="w" data-i="'+i+'"'+(m.w?' checked':'')+dis+'></td>'+
-        '<td style="text-align:center"><select data-f="pt" data-i="'+i+'" class="ptsel"'+dis+'>'+
-          [11,7,3,0].map(function(x){return '<option value="'+x+'"'+(Number(m.pt)===x?' selected':'')+'>'+x+'</option>';}).join('')+'</select></td>'+
+        /* 11·7·3·0 은 기준이지 전부가 아니다. 역할이 그 넷에 안 떨어지는
+           사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
+           목록은 그대로 내려주되 손으로 쳐도 받는다. */
+        '<td style="text-align:center"><input type="number" min="0" step="1" '+
+          'data-f="pt" data-i="'+i+'" class="ptsel" list="ptvals" value="'+esc(num(m.pt,0))+'"'+dis+'></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num'+(c.capped[i]?' capped':'')+'">'+(prep?prep.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
@@ -6043,7 +6047,11 @@
           }
         }
       }
-      if(fl==='w'||fl==='pt')render(); return;
+      /* 포인트는 치는 중이다. 통째로 다시 그리면 칸이 새로 만들어진다.
+         배분 금액만 고쳐 준다. 근무 체크는 한 번에 끝나니 그대로 둔다. */
+      if(fl==='pt'){ softNumbers(ev); return; }
+      if(fl==='w')render();
+      return;
     }
     var fmap={evName:'name',evDate:'date',evPlace:'place',evSlack:'slackCh',net:'net',rev:'rev',opex:'opex',tax:'tax',rate:'rate',ratio:'ratio',cap:'cap',unit:'unit'};
     if(fmap[t.id]){ ev[fmap[t.id]]=t.value; touch('ev',ev.id); softNumbers(ev); }
