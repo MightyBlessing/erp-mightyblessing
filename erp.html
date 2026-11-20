@@ -281,7 +281,8 @@
   .fixin{width:92px; padding:4px 6px; font-size:12.5px; text-align:right; font-family:var(--font-num)}
   .fixin::placeholder{color:var(--zero); font-weight:400}
   .oldtxt{margin-top:5px; font-size:11.5px; color:var(--zero); white-space:pre-wrap}
-  .ceotag{margin-top:2px; font-size:10.5px; color:var(--accent-ink); white-space:nowrap}
+  .cuttag{font-size:11px;color:var(--warn);margin-top:2px;font-weight:600}
+    .ceotag{margin-top:2px; font-size:10.5px; color:var(--accent-ink); white-space:nowrap}
   .chk{width:16px; height:16px; accent-color:var(--accent)}
   .del{border:0; background:transparent; color:var(--muted); cursor:pointer; font-size:15px; padding:0 4px}
 
@@ -1027,15 +1028,6 @@
 
        예산을 다 안 쓰는 게 보통이다. 남는 돈은 운영통장으로 이월된다.
        「예산을 남김없이 나눈다」가 아니라 「기여만큼 준다」가 규칙이다. */
-    var alloc=ms.map(function(){return 0;}),capped=ms.map(function(){return false;});
-    var fixed=ms.map(memberFix);
-
-    /* 대표가 직접 적은 금액이 먼저다. 그 돈을 떼고 남은 것으로 나머지를
-       나눈다. 계산이 사람의 판단을 덮으면 안 된다. */
-    var fixSum=0;
-    fixed.forEach(function(v,i){ if(v!==null){ alloc[i]=v; fixSum+=v; } });
-    var poolLeft=pool-fixSum; if(poolLeft<0) poolLeft=0;
-
     /* ─── 사례비는 대표가 정한다 ───
        점수로 나누던 것을 걷어냈다. 기여도는 숫자로 떨어지지 않고,
        떨어지는 척하면 오히려 설명이 안 된다. 누가 무슨 일을 했는지는
@@ -1053,12 +1045,28 @@
     var topOther=others.length?Math.max.apply(null,others):null;
     if(topOther!==null) ms.forEach(function(m,i){ if(isCeo[i]) alloc[i]=topOther; });
 
+    /* ─── 예산을 넘으면 다 같이 줄인다 ───
+       대표가 적은 금액이 재원보다 많으면, 누구 하나를 골라 깎지 않고
+       전부를 같은 비율로 줄인다. 기여의 순서와 간격이 그대로 남는 게
+       손으로 고르는 것보다 설명이 된다. 적은 금액은 그대로 두고 보여준다 —
+       얼마를 적었고 실제로 얼마가 나가는지 둘 다 보여야 한다.
+       「배분 단위」로 내림한다. 내림한 나머지는 쓰지 않고 남긴다. */
+    var want=alloc.slice();
+    var wantTotal=want.reduce(function(a,b){return a+b;},0);
+    var scale=1;
+    if(wantTotal>pool&&wantTotal>0){
+      scale=pool/wantTotal;
+      alloc=want.map(function(v){ return Math.floor(v*scale/unit)*unit; });
+    }
+    var scaled=scale<1;
+
     var capped=alloc.map(function(v){ return v>cap; });
     var prepTotal=alloc.reduce(function(a,b){return a+b;},0);
     return {net:net,rate:rate,ratio:ratio,cap:cap,workedCount:workedCount,dayTotal:dayTotal,fundBase:fundBase,
       pool:pool,days:dayList,fixed:ms.map(memberFix),
       isCeo:isCeo,topOther:topOther,pts:ms.map(memberPt),
       alloc:alloc,capped:capped,anyCap:capped.some(Boolean),
+      want:want,wantTotal:wantTotal,scale:scale,scaled:scaled,
       over:prepTotal>pool,prepTotal:prepTotal,
       leftover:pool-prepTotal,payTotal:dayTotal+prepTotal};
   }
@@ -4399,6 +4407,12 @@
     (dis||!S.me.canEdit?'':'<button type="button" class="tog addtog" data-addtog="'+kind+'" data-i="'+i+'" title="목록에 없는 일을 더합니다">+</button>')+
     '</div>';
   }
+  /* 줄어든 사람에게만 붙는다. 적은 금액 밑에 실제로 나갈 금액을 적는다. */
+  function cutTag(c,i){
+    if(!c.scaled||!c.want[i]) return '';
+    return '<div class="cuttag" title="예산에 맞춰 모두 같은 비율로 줄였습니다">→ '+
+      c.alloc[i].toLocaleString('ko-KR')+'</div>';
+  }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
     var PREP=ptPrep(), DAY=ptDay();
@@ -4432,10 +4446,10 @@
           (ro
             ? (prep?prep.toLocaleString('ko-KR'):'—')
             : (c.isCeo[i]&&c.topOther!==null
-              ? '<span title="대표는 가장 많이 받는 분과 같습니다">'+(prep?prep.toLocaleString('ko-KR'):'—')+
-                '<div class="ceotag">대표 · 최고액과 같음</div></span>'
+              ? '<span title="대표는 가장 많이 받는 분과 같습니다">'+(c.want[i]?c.want[i].toLocaleString('ko-KR'):'—')+
+                '<div class="ceotag">대표 · 최고액과 같음</div>'+cutTag(c,i)+'</span>'
               : '<input class="fixin" type="number" min="0" step="10000" data-f="fix" data-i="'+i+'" '+
-                'value="'+esc(c.fixed[i]===null?'':c.fixed[i])+'" placeholder="0">'))+
+                'value="'+esc(c.fixed[i]===null?'':c.fixed[i])+'" placeholder="0">'+cutTag(c,i)))+
         '</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
@@ -4444,6 +4458,7 @@
       '한 일을 <b>눌러서</b> 남기면 <b>기여 점수</b>가 회색으로 나옵니다. '+
       '그 점수를 보고 <b>준비 사례비를 직접 적습니다</b> — 점수가 금액을 정하지는 않습니다. 기준입니다.<br>'+
       '<b>대표</b>는 가장 많이 받는 분과 같은 금액으로 자동으로 맞춰집니다.<br>'+
+      '합이 <b>재원을 넘으면</b> 모두 같은 비율로 줄여서 지급합니다 — 적은 금액 밑에 실제 금액이 <b>→</b> 로 나옵니다.<br>'+
       '항목과 기준값은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
     if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'일','−'+won(c.dayTotal)]);
@@ -4516,6 +4531,12 @@
   }
   function sg(id,label,on,ro){return '<button type="button" id="'+id+'" aria-pressed="'+(on?'true':'false')+'"'+(ro?' disabled':'')+'>'+label+'</button>';}
   function settleNote(c,ev){
+    if(c.scaled)return '<div class="note n-warn"><b>예산에 맞춰 모두 '+
+      (100-c.scale*100).toFixed(1).replace(/\.0$/,'')+'%씩 줄였습니다.</b> '+
+      '적으신 합이 '+won(c.wantTotal)+'인데 재원은 '+won(c.pool)+'이라 '+
+      won(c.wantTotal-c.pool)+'이 넘습니다. 누구 하나를 깎지 않고 <b>같은 비율로</b> 줄였고, '+
+      '실제로 나갈 금액은 적으신 금액 밑에 <b>→</b> 로 적어 뒀습니다. '+
+      '그대로 두셔도 되고, 금액을 줄이거나 계산 설정의 <b>배정 비율</b>을 고치셔도 됩니다.</div>';
     if(c.over)return '<div class="note n-warn"><b>예산을 '+won(c.prepTotal-c.pool)+' 넘었습니다 — 상신할 수 없습니다.</b> '+
       '적으신 사례비 합이 '+won(c.prepTotal)+'인데 재원은 '+won(c.pool)+'입니다. '+
       '사례비를 줄이거나 계산 설정의 <b>배정 비율</b>을 고쳐주세요.</div>';
