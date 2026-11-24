@@ -1027,7 +1027,11 @@
     var workedCount=dayList.reduce(function(a,b){return a+b;},0);   /* 사람 수가 아니라 일수의 합 */
     var dayTotal=rate*workedCount, fundBase=Math.round(net*ratio);
     /* 기본: 사례비 예산 안에 당일 일급이 포함된다. 'opex'로 둔 행사만 운영비에서 따로 나간다. */
-    var pool=ev.wageSrc==='opex'?fundBase:fundBase-dayTotal; if(pool<0)pool=0;
+    /* 당일 일급도 사례비 예산에서 나간다. 예전에는 「운영비 별도」로
+       빼 둘 수 있었는데, 그러면 일급이 예산 밖으로 새면서 지급 후
+       잔액이 남는 것처럼 보였다. 실제로는 적자인데 화면은 흑자였다.
+       한 주머니에서 일급과 준비 사례비가 같이 나간다. */
+    var pool=fundBase-dayTotal; if(pool<0)pool=0;
     /* ─── 배분 ───
        「상한에서 비율대로」. 가장 높은 포인트가 상한(30만)을 받고
        나머지는 그 비율만큼 받는다. 11·7·3 이면 30만 / 19만 / 8만.
@@ -1045,14 +1049,8 @@
        예산(잔여액×비율)은 그대로 보여준다. 넘겼는지 아닌지는 알아야 한다. */
     var alloc=ms.map(function(m){ var v=memberFix(m); return v===null?0:v; });
 
-    /* 대표는 가장 많이 받는 사람과 같은 금액을 받는다. 금액을 적게 하지
-       않고 여기서 맞춘다 — 손으로 맞추면 다른 사람을 고칠 때마다 대표
-       금액도 같이 고쳐야 하고, 한 번 잊으면 그대로 나간다. */
-    var ceoSet=ceoNameSet();
-    var isCeo=ms.map(function(m){ return isCeoMember(m,ceoSet); });
-    var others=alloc.filter(function(v,i){ return !isCeo[i]; });
-    var topOther=others.length?Math.max.apply(null,others):null;
-    if(topOther!==null) ms.forEach(function(m,i){ if(isCeo[i]) alloc[i]=topOther; });
+    /* 대표도 자기 금액을 직접 적는다. 예전에는 최고액으로 자동으로
+       맞췄는데, 대표가 덜 받기로 하는 경우를 적을 수가 없었다. */
 
     /* ─── 예산을 넘으면 다 같이 줄인다 ───
        대표가 적은 금액이 재원보다 많으면, 누구 하나를 골라 깎지 않고
@@ -1073,7 +1071,6 @@
     var prepTotal=alloc.reduce(function(a,b){return a+b;},0);
     return {net:net,rate:rate,ratio:ratio,cap:cap,workedCount:workedCount,dayTotal:dayTotal,fundBase:fundBase,
       pool:pool,days:dayList,fixed:ms.map(memberFix),
-      isCeo:isCeo,topOther:topOther,pts:ms.map(memberPt),
       alloc:alloc,capped:capped,anyCap:capped.some(Boolean),
       want:want,wantTotal:wantTotal,scale:scale,scaled:scaled,
       over:prepTotal>pool,prepTotal:prepTotal,
@@ -4402,29 +4399,24 @@
   }
   /* 누르면 켜지는 단추. select 나 글상자와 달리 열고 고르고 닫는 과정이
      없다 — 보이는 것을 그냥 누른다. */
-  function togs(kind,list,m,i,dis){
-    var on=(m&&m[kind])||[];
-    return '<div class="togs">'+list.map(function(it,k){
-      var hit=on.indexOf(k)>=0;
-      return '<button type="button" class="tog'+(hit?' on':'')+'" '+
-        'data-tog="'+kind+'" data-tk="'+k+'" data-i="'+i+'"'+(dis?' disabled':'')+
-        ' aria-pressed="'+(hit?'true':'false')+'">'+esc(it.t)+
-        '<span class="togw">'+esc(it.w)+'</span></button>';
-    }).join('')+
-    /* 목록에 없는 일은 늘 생긴다. 그때 설정 화면까지 가게 하면 그냥
-       비고에 적고 점수에는 안 들어간다. 여기서 바로 만든다. */
-    (dis||!S.me.canEdit?'':'<button type="button" class="tog addtog" data-addtog="'+kind+'" data-i="'+i+'" title="목록에 없는 일을 더합니다">+</button>')+
-    '</div>';
-  }
   /* 줄어든 사람에게만 붙는다. 적은 금액 밑에 실제로 나갈 금액을 적는다. */
   function cutTag(c,i){
     if(!c.scaled||!c.want[i]) return '';
     return '<div class="cuttag" title="예산에 맞춰 모두 같은 비율로 줄였습니다">→ '+
       c.alloc[i].toLocaleString('ko-KR')+'</div>';
   }
+  /* 한 일을 적는 칸. 예전에 단추로 눌러 둔 게 있으면 글로 바꿔 합친다.
+     한 번 합치고 나면 다음부터는 그냥 글이다. */
+  function workCell(f,m,i,dis,legacy){
+    var v=String((m&&m[f])||'');
+    if(!v&&legacy) v=legacy;
+    return '<textarea data-f="'+f+'" data-i="'+i+'" rows="2" '+
+      'placeholder="한 일을 적어주세요" '+
+      'style="width:100%;min-width:170px;padding:5px 7px;font-size:12.5px;resize:vertical"'+dis+'>'+
+      esc(v)+'</textarea>';
+  }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
-    var PREP=ptPrep(), DAY=ptDay();
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
       var day=memberDays(m)*c.rate,prep=c.alloc[i],pay=day+prep;
@@ -4433,11 +4425,12 @@
           'placeholder="이름 고르기" autocomplete="off" '+
           'style="width:96px;padding:4px 6px'+(m.pid?'':';border-color:var(--warn)')+'" '+
           (m.pid?'title="명부: '+esc(personName(m.pid)||'')+'"':'title="명부에 없는 이름입니다"')+dis+'></td>'+
-        '<td>'+togs('prep',PREP,m,i,dis)+
-          /* 옛 정산에 손으로 적어 둔 글은 지우지 않는다. 그게 그때의 근거다. */
-          (m.p?'<div class="oldtxt">'+esc(m.p)+'</div>':'')+'</td>'+
-        '<td>'+togs('day',DAY,m,i,dis)+
-          (m.r?'<div class="oldtxt">'+esc(m.r)+'</div>':'')+'</td>'+
+        /* 한 일은 대표가 적는다. 목록에서 고르게 했더니 「기획·구성」처럼
+           뭉뚱그린 이름에 1씩 붙어서, 실제로 한 일보다 점수가 먼저
+           읽혔다. 적는 자리를 주는 게 오해가 적다. 눌러 둔 옛 항목은
+           글로 바꿔 그대로 남긴다. */
+        '<td>'+workCell('p',m,i,dis,togText('prep',m))+'</td>'+
+        '<td>'+workCell('r',m,i,dis,togText('day',m))+'</td>'+
         '<td style="text-align:center"><select class="dsel" data-f="days" data-i="'+i+'"'+dis+'>'+
           [0,1,2,3,4,5,6,7,8,9,10].map(function(n){
             return '<option value="'+n+'"'+(memberDays(m)===n?' selected':'')+'>'+n+'</option>';
@@ -4446,31 +4439,24 @@
            사람이 늘 있고, 고를 수만 있으면 억지로 가까운 칸에 밀어 넣게 된다.
            목록은 그대로 내려주되 손으로 쳐도 받는다. */
 
-        '<td style="text-align:center"><span class="ptref" title="누른 항목의 기준값 합계입니다. 금액을 정하는 기준이지 금액을 계산하지는 않습니다.">'+
-          num(c.pts[i],0)+'</span></td>'+
         '<td><input data-f="memo" data-i="'+i+'" value="'+esc(m.memo||'')+'" '+
           'placeholder="적을 게 있으면" style="min-width:120px;padding:4px 6px;font-size:12.5px"'+dis+'></td>'+
         '<td class="num">'+(day?day.toLocaleString('ko-KR'):'—')+'</td>'+
         '<td class="num'+(c.capped[i]?' capped':'')+'">'+
           (ro
             ? (prep?prep.toLocaleString('ko-KR'):'—')
-            : (c.isCeo[i]&&c.topOther!==null
-              ? '<span title="대표는 가장 많이 받는 분과 같습니다">'+(c.want[i]?c.want[i].toLocaleString('ko-KR'):'—')+
-                '<div class="ceotag">대표 · 최고액과 같음</div>'+cutTag(c,i)+'</span>'
-              : '<input class="fixin" type="number" min="0" step="10000" data-f="fix" data-i="'+i+'" '+
-                'value="'+esc(c.fixed[i]===null?'':c.fixed[i])+'" placeholder="0">'+cutTag(c,i)))+
+            : '<input class="fixin" type="number" min="0" step="10000" data-f="fix" data-i="'+i+'" '+
+              'value="'+esc(c.fixed[i]===null?'':c.fixed[i])+'" placeholder="0">'+cutTag(c,i))+
         '</td>'+
         '<td class="num pay">'+pay.toLocaleString('ko-KR')+'</td>'+
         '<td>'+(ro?'':'<button class="del" data-del="'+i+'" aria-label="삭제">×</button>')+'</td></tr>';
     }).join('');
     var ptLegend='<p class="hint" style="margin:10px 0 0">'+
-      '한 일을 <b>눌러서</b> 남기면 <b>기여 점수</b>가 회색으로 나옵니다. '+
-      '그 점수를 보고 <b>준비 사례비를 직접 적습니다</b> — 점수가 금액을 정하지는 않습니다. 기준입니다.<br>'+
-      '<b>대표</b>는 가장 많이 받는 분과 같은 금액으로 자동으로 맞춰집니다.<br>'+
-      '합이 <b>재원을 넘으면</b> 모두 같은 비율로 줄여서 지급합니다 — 적은 금액 밑에 실제 금액이 <b>→</b> 로 나옵니다.<br>'+
-      '항목과 기준값은 <b>시스템 설정 → 사전 준비 항목 · 공연 당일 역할</b>에서 고칠 수 있습니다.</p>';
+      '한 일은 <b>직접 적습니다</b>. 그걸 보고 <b>준비 사례비도 직접 적습니다</b> — 자동으로 계산하지 않습니다.<br>'+
+      '<b>당일 일급</b>도 사례비 예산에서 나갑니다. 참가일수를 고르면 더해집니다.<br>'+
+      '합이 <b>재원을 넘으면</b> 모두 같은 비율로 줄여서 지급합니다 — 적은 금액 밑에 실제 금액이 <b>→</b> 로 나옵니다.</p>';
     var chain=[['행사 잔여액 (세후)',won(c.net)],['× 사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)]];
-    if(ev.wageSrc!=='opex')chain.push(['− 당일 일급 '+c.workedCount+'일','−'+won(c.dayTotal)]);
+    chain.push(['− 당일 일급 '+c.workedCount+'일','−'+won(c.dayTotal)]);
     chain.push(['준비 사례비 재원',won(c.pool)]);
     var delCtl='';
     if(writable()&&p.status==='draft'){
@@ -4508,8 +4494,6 @@
             '<div class="field"><label for="unit">배분 단위 (내림)</label><select id="unit"'+dis+'>'+
             [[10000,'10,000원'],[1000,'1,000원'],[1,'1원']].map(function(u){return '<option value="'+u[0]+'"'+(num(ev.unit,10000)===u[0]?' selected':'')+'>'+u[1]+'</option>';}).join('')+
             '</select></div></div>'+
-          '<div class="field"><label>당일 일급 재원</label><div class="seg">'+
-            sg('sFund','사례비 예산 (기본)',ev.wageSrc!=='opex',ro)+sg('sOpex','운영비 별도',ev.wageSrc==='opex',ro)+'</div></div>'+
           /* 「상한 초과분 이월/재배분」은 없앴다. 상한에서 비율로 내려오므로
              누가 상한을 넘어 남는 돈이라는 게 생기지 않는다. */
           '<p class="hint" style="margin:-4px 0 0">여기 값들은 <b>예산을 가늠하는 기준</b>입니다. '+
@@ -4522,16 +4506,20 @@
         '</div></section>'+
         '<section class="card"><h2>정산표</h2><div class="scroll"><table>'+
           '<thead><tr><th>팀원</th><th>사전 준비 및 실제 기여</th><th>공연 당일 역할</th><th style="text-align:center">참가<br>일수</th>'+
-          '<th style="text-align:center">기여<br>점수</th><th>비고</th>'+
+          '<th>비고</th>'+
           '<th class="num">당일 일급</th><th class="num">준비 사례비</th><th class="num">지급액</th><th></th></tr></thead>'+
-          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="6">합계 · 참가 '+c.workedCount+'일</td>'+
+          '<tbody>'+rows+'</tbody><tfoot><tr><td colspan="5">합계 · 참가 '+c.workedCount+'일</td>'+
           '<td class="num">'+c.dayTotal.toLocaleString('ko-KR')+'</td><td class="num">'+c.prepTotal.toLocaleString('ko-KR')+'</td>'+
           '<td class="num">'+c.payTotal.toLocaleString('ko-KR')+'</td><td></td></tr></tfoot></table></div>'+
           ptLegend+
           '<div class="actions" style="margin-top:14px">'+(ro?'':'<button class="btn" id="addRow">+ 팀원 추가</button>')+
             '<button class="btn primary" id="copy">표 복사</button></div>'+
           '<div class="base">'+[['정산 기준액',won(c.net)],['사례비 배정 비율',(c.ratio*100).toFixed(0)+'%'],['사례비 예산',won(c.fundBase)],
-            ['1인당 당일 일급',won(c.rate)],['준비 사례비 지급',won(c.prepTotal)]]
+            ['1인당 당일 일급',won(c.rate)],
+            /* 일급 합계를 안 보여주면 「예산 − 준비 사례비」만 눈에 남아
+               잔액이 남는 것처럼 보인다. 실제로는 일급이 먼저 나갔다. */
+            ['당일 일급 지급 ('+c.workedCount+'일)',won(c.dayTotal)],
+            ['준비 사례비 지급',won(c.prepTotal)]]
             .map(function(r){return '<div><span class="lab">'+r[0]+'</span><span>'+r[1]+'</span></div>';}).join('')+
             '<div class="fin"><span>지급 후 잔액 (운영통장 이월)</span><span>'+won(c.leftover)+'</span></div></div>'+
           settleNote(c,ev)+'</section>'+
@@ -5427,11 +5415,11 @@
     {k:'accounts', t:'계정과목', d:ACCOUNTS_DEF, h:'지출결의서에서 고르는 항목입니다.'},
     {k:'biz',      t:'사업 구분', d:BIZ_DEF,     h:'장부와 행사별 수지를 가르는 기준입니다. 회계 시트의 사업명과 같게 두세요.'},
     {k:'payway',   t:'지급 수단', d:PAYWAY_DEF,  h:'장부에 적는 결제 방법입니다.'},
-    {k:'ptprep',   t:'사전 준비 항목', d:PTPREP_DEF,
-     h:'정산에서 누르는 단추입니다. 「점수|이름」 한 줄에 하나 — 가름쇠는 | 입니다. 누른 항목의 합이 그 사람 점수가 됩니다.'},
-    {k:'ptday',    t:'공연 당일 역할', d:PTDAY_DEF,
-     h:'당일 역할 단추입니다. 같은 모양으로 적습니다. 당일 일급과는 별개로 점수에 더해집니다.'}
   ];
+  /* ptprep · ptday 는 설정 화면에서 뺐다. 이제 한 일은 글로 적는다.
+     목록은 코드에 남겨 둔다 — 예전에 단추로 눌러 둔 정산을 열 때
+     그 번호를 이름으로 되돌리는 데 쓴다. 목록을 고치면 옛 정산의
+     글이 딴 이름으로 바뀐다. */
   var SLACK_EV=[
     ['ask','결재 요청'],['ok','결재 승인'],['no','결재 반려'],
     ['edit','결재 중 수정'],
@@ -6203,42 +6191,9 @@
     var ev=S.sel&&S.events[S.sel];
     if((el=t.closest('[data-del]'))&&ev){ ev.members.splice(+el.dataset.del,1); touch('ev',ev.id); render(); return; }
     if(t.id==='addRow'&&ev){ ev.members=(ev.members||[]).concat([{n:'',pid:'',p:'',r:'',w:false,pt:0}]); touch('ev',ev.id); render(); return; }
-    if((el=t.closest('[data-addtog]'))&&ev){
-      var kind2=el.dataset.addtog, mi2=+el.dataset.i;
-      var key2=kind2==='day'?'ptday':'ptprep';
-      var def2=kind2==='day'?PTDAY_DEF:PTPREP_DEF;
-      var nm2=(window.prompt('더할 일의 이름을 적어주세요','')||'').trim();
-      if(!nm2) return;
-      if(nm2.indexOf('|')>=0) return errbar('이름에 | 는 쓸 수 없습니다');
-      var cur2=cfgList(key2,def2).slice();
-      var names2=ptList(key2,def2).map(function(x){return x.t;});
-      if(names2.indexOf(nm2)>=0) return errbar('이미 있는 항목입니다');
-      cur2.push('1|'+nm2);
-      var at2=cur2.length-1;
-      /* 만든 사람이 바로 켜진 걸 본다. 만들고 또 눌러야 하면 잊는다. */
-      var mb2=ev.members&&ev.members[mi2];
-      if(mb2){ mb2[kind2]=((mb2[kind2]||[]).concat([at2])).sort(function(a,b){return a-b;}); touch('ev',ev.id); }
-      return saveList(key2,cur2);
-    }
-    if((el=t.closest('[data-tog]'))&&ev){
-      var ti=+el.dataset.i, kind=el.dataset.tog, tk=+el.dataset.tk;
-      var mb=ev.members&&ev.members[ti]; if(!mb) return;
-      var arr=(mb[kind]||[]).slice(), at=arr.indexOf(tk);
-      if(at<0) arr.push(tk); else arr.splice(at,1);
-      arr.sort(function(a,b){return a-b;});
-      mb[kind]=arr;
-      touch('ev',ev.id);
-      /* 누른 단추 하나와 숫자만 고친다. 통째로 다시 그리면 방금 누른
-         자리가 사라지고, 연달아 누르기가 힘들어진다. */
-      var onNow=at<0;
-      el.classList.toggle('on',onNow);
-      el.setAttribute('aria-pressed',onNow?'true':'false');
-      softNumbers(ev);
-      return;
-    }
     if(t.id==='copy'&&ev) return copyTable(ev);
     if(ev&&!saving){
-      var map={mDirect:['mode','direct'],mCalc:['mode','calc'],sOpex:['wageSrc','opex'],sFund:['wageSrc','fund'],
+      var map={mDirect:['mode','direct'],mCalc:['mode','calc'],
                cCarry:['capMode','carry'],cRedist:['capMode','redistribute']};
       if(map[t.id]){ ev[map[t.id][0]]=map[t.id][1]; touch('ev',ev.id); render(); return; }
     }
@@ -6512,9 +6467,8 @@
       var m=ev.members&&ev.members[i]; if(!m)return;
       if(!tr.querySelector('[data-f="n"]')) return;   /* 정산표 줄이 아니다 */
       var day=memberDays(m)*c.rate,prep=c.alloc[i]||0;
-      var pr=tr.querySelector('.ptref'); if(pr) pr.textContent=num(c.pts[i],0);
-      if(tr.cells[6])tr.cells[6].textContent=day?day.toLocaleString('ko-KR'):'—';
-      if(tr.cells[8])tr.cells[8].textContent=(day+prep).toLocaleString('ko-KR');
+      if(tr.cells[5])tr.cells[5].textContent=day?day.toLocaleString('ko-KR'):'—';
+      if(tr.cells[7])tr.cells[7].textContent=(day+prep).toLocaleString('ko-KR');
     });
   }
 
