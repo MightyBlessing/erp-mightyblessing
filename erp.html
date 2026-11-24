@@ -2576,16 +2576,24 @@
     }).map(function(u){ return {uid:u, name:memberName(u), email:(S.members[u]||{}).email||''}; })
      .sort(function(a,b){ return a.name.localeCompare(b.name,'ko'); });
   }
+  /* 이름 옆에 붙는 한 줄. 예전에는 이메일·「구성원」·「명부」·원천세 구분이
+     같은 자리에 섞여 나와서, 같은 목록인데 사람마다 다른 걸 읽게 됐다.
+     하나로 통일한다 — 메일 주소가 있으면 그것, 없으면 「외부」. */
+  function nameHint(o){
+    var e=String((o&&o.email)||'').trim();
+    if(!e&&o&&o.uid){ var mm=S.members[o.uid]; e=String((mm&&mm.email)||'').trim(); }
+    return e||'외부';
+  }
   /* 이름칸에 내려올 목록. 명부가 먼저, 그 뒤에 아직 명부에 없는 구성원. */
   function nameChoices(){
     var seen={}, out=[];
     peopleList().forEach(function(p){
       var n=(p.name||'').trim(); if(!n||seen[n])return; seen[n]=1;
-      out.push({n:n, hint:p.taxRole||(p.uid?'구성원':'명부')});
+      out.push({n:n, hint:nameHint(p)});
     });
     membersNotInPeople().forEach(function(m){
       if(seen[m.name])return; seen[m.name]=1;
-      out.push({n:m.name, hint:m.email||'구성원', uid:m.uid});
+      out.push({n:m.name, hint:nameHint(m), uid:m.uid});
     });
     return out;
   }
