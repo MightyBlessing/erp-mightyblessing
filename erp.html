@@ -360,8 +360,14 @@
   /* 원본 공문은 '수 신' 다음에 두 칸 정도만 띄우고 바로 내용이 온다.
      자간을 넓게 주고 최소 너비까지 크게 잡으면 말줄임표처럼 멀어진다. */
   .doc .to b{font-weight:400; color:#4a4f57; min-width:40px; letter-spacing:.16em; margin-right:-.16em}
-  .doc ol.body{padding-left:19px; margin:12px 0}
-  .doc ol.body li{margin-bottom:9px; text-align:justify}
+  /* 번호를 브라우저에 맡기지 않고 직접 그린다. PDF 를 그리는
+     라이브러리가 ::marker 를 못 옮겨서 「1귀 교회의」처럼 번호가
+     글자에 달라붙는다. */
+  .doc ol.body{list-style:none; padding-left:0; margin:12px 0; counter-reset:bd 0}
+  .doc ol.body li{counter-increment:bd; position:relative;
+    padding-left:21px; margin-bottom:9px; text-align:justify}
+  .doc ol.body li::before{content:counter(bd) "."; position:absolute; left:0; top:0;
+    width:17px; text-align:left}
   .doc table.ov{width:100%; border-collapse:collapse; margin:12px 0; font-size:12.5px}
   .doc table.ov th,.doc table.ov td{border:1px solid #c9cdd3; padding:6px 9px; vertical-align:top; color:#15171a}
   .doc table.ov th{width:96px; background:#F2F3F5; font-weight:500; text-align:left; white-space:nowrap}
@@ -1487,7 +1493,11 @@
     if(!n||n.nodeType!==1) return null;
     if(n.tagName==='OL'&&n.classList.contains('body'))
       return {kids:[].slice.call(n.children), shell:function(from){
-        var o=n.cloneNode(false); o.setAttribute('start',String(from+1)); return o;
+        var o=n.cloneNode(false);
+        o.setAttribute('start',String(from+1));
+        /* 번호를 직접 그리므로 start 만으로는 안 된다. 세는 값도 옮긴다. */
+        o.style.counterReset='bd '+from;
+        return o;
       }};
     if(n.tagName==='TABLE'){
       var rows=[].slice.call(n.querySelectorAll('tr'));
@@ -2512,9 +2522,9 @@
       '<div class="to"><i>□</i><b>수 신</b><span>'+esc(d.to||'—')+'</span></div>'+
       '<div class="to"><i>□</i><b>참 조</b><span>'+esc(d.cc||'—')+'</span></div>'+
       '<div class="to"><i>□</i><b>제 목</b><span>'+esc(d.subject||'—')+'</span></div><hr class="thin">'+
-      '<ol class="body">'+(d.paras||[]).map(function(p){return '<li>'+esc(p).replace(/\n/g,'<br>')+'</li>';}).join('')+'</ol>'+
+      '<ol class="body">'+(d.paras||[]).map(function(p){return '<li>'+esc(p).replace(/\r\n?|\n/g,'<br>')+'</li>';}).join('')+'</ol>'+
       (ov.length?'<table class="ov">'+ov.map(function(r,i){
-        return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\n/g,'<br>')+'</td></tr>';
+        return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\r\n?|\n/g,'<br>')+'</td></tr>';
       }).join('')+'</table>':'')+
       '<div class="tail">'+
       attBlock(d)+
