@@ -1368,6 +1368,79 @@
     }
     return out;
   }
+  /* ─── 정산도 무엇이 바뀌었는지 남긴다 ───
+     문서에만 있던 기록이다. 정산은 사례비가 걸린 거라 오히려 더
+     중요하다. 회계가 승인한 뒤에 금액이 바뀌어도 회계는 몰랐다. */
+  var EVF={name:'행사명', date:'일자', place:'장소', mode:'잔여액 산출',
+    net:'잔여액', rev:'수입', opex:'운영비', tax:'세금',
+    rate:'당일 일급', ratio:'배정 비율', cap:'상한', unit:'배분 단위'};
+  var EVMONEY={net:1,rev:1,opex:1,tax:1,rate:1,ratio:1,cap:1,members:1};
+  function evShow(k,v){
+    if(v==null||v==='') return '비어 있음';
+    if(k==='ratio') return String(v)+'%';
+    if(k==='mode') return v==='direct'?'직접 입력':'수입 − 운영비 − 세금';
+    if({net:1,rev:1,opex:1,tax:1,rate:1,cap:1,unit:1}[k]) return won(num(v,0));
+    return String(v);
+  }
+  /* 팀원은 줄마다 본다. 한 사람의 금액이 바뀐 걸 「팀원이 바뀌었습니다」
+     한 줄로 뭉뚱그리면 누구 돈이 움직였는지 알 수 없다. */
+  function evMemberDiff(before,after){
+    var out=[], A=before.members||[], B=after.members||[];
+    var n=Math.max(A.length,B.length);
+    for(var i=0;i<n;i++){
+      var a=A[i]||null, b=B[i]||null;
+      if(!a&&b){ out.push({k:'members', l:'팀원 추가', from:'—', to:String(b.n||'')}); continue; }
+      if(a&&!b){ out.push({k:'members', l:'팀원 삭제', from:String(a.n||''), to:'—'}); continue; }
+      if(!a||!b) continue;
+      var who=String(b.n||a.n||'').trim()||('팀원 '+(i+1));
+      [['fix','사례비'],['d','참가일수'],['p','사전 준비'],['r','당일 역할'],['memo','비고']]
+        .forEach(function(f){
+          var x=a[f[0]], y=b[f[0]];
+          if(String(x==null?'':x)===String(y==null?'':y)) return;
+          var money=f[0]==='fix';
+          out.push({k:'members', l:who+' · '+f[1],
+            from:money?(x===''||x==null?'비어 있음':won(num(x,0))):String(x==null||x===''?'비어 있음':x),
+            to:money?(y===''||y==null?'비어 있음':won(num(y,0))):String(y==null||y===''?'비어 있음':y)});
+        });
+    }
+    return out;
+  }
+  function evDiff(before,after){
+    var out=[];
+    if(!before||!after) return out;
+    Object.keys(EVF).forEach(function(k){
+      var a=before[k], b=after[k];
+      if(a===undefined&&b===undefined) return;
+      if(String(a==null?'':a)===String(b==null?'':b)) return;
+      out.push({k:k, l:EVF[k], from:evShow(k,a), to:evShow(k,b)});
+    });
+    return out.concat(evMemberDiff(before,after));
+  }
+  /* 이 정산을 이미 승인한 사람들. */
+  function evApprovedUids(ev){
+    return apprOf(ev.id)
+      .filter(function(a){ return (a.kind==='accounting'||a.kind==='ceo')&&a.uid!==S.me.id; })
+      .map(function(a){ return a.uid; });
+  }
+  function logEvEdits(id,before,after){
+    var diffs=evDiff(before,after);
+    if(!diffs.length) return null;
+    var row={at:nowISO(), by:S.me.id||'', fields:diffs};
+    after.log=(after.log||[]).concat([row]);
+    var who=S.me.name||'누군가';
+    var money=diffs.some(function(x){ return EVMONEY[x.k]; });
+    var line=diffs.map(function(x){ return x.l+' '+x.from+' → '+x.to; }).join(' · ');
+    evApprovedUids(after.id?after:{id:id}).forEach(function(u){
+      notify(u, who+' 님이 승인 뒤에 「'+(after.name||'행사')+' 정산」을 고쳤습니다 — '+line, '');
+    });
+    try{
+      var ev2=clone(after); ev2.id=id;
+      settleSay('edit',ev2,evApprovedUids(ev2).concat([after.createdBy]).filter(Boolean),
+        who+' 님이 결재 중에 고쳤습니다'+(money?' · 돈에 관한 칸입니다':''),'정산표 보기');
+    }catch(e){}
+    return row;
+  }
+
   /* 이미 승인한 사람들. 바뀐 걸 알아야 할 사람이다. */
   function approvedUids(d){
     return (d.steps||[]).filter(function(x){ return x.state==='approved'&&x.uid!==S.me.id; })
@@ -1409,6 +1482,14 @@
         if(row){ src.log=body.log; }
       }
       S.editBase[id]=clone(body);
+    }
+    if(kind==='ev'&&S.editBase['ev:'+id]){
+      /* 작성중일 때 고치는 건 그냥 작성이다. 상신한 뒤부터 남긴다. */
+      if(String(src.status||'draft')!=='draft'){
+        var row2=logEvEdits(id,S.editBase['ev:'+id],body);
+        if(row2){ src.log=body.log; }
+      }
+      S.editBase['ev:'+id]=clone(body);
     }
     S.db.doc((kind==='doc'?'docs/':'events/')+id).set(body)
       .catch(function(e){errbar('저장 실패 '+(e&&e.code||''));})
@@ -4599,6 +4680,9 @@
   }
   function renderEvent(ev){
     loadSlackChs();   /* 처음 한 번만 불러온다. 다 받으면 스스로 다시 그린다 */
+    /* 고치기 전 모습을 한 벌 떠둔다. 한 번만 떠둔다 — 다시 그릴 때마다
+       떠내면 방금 친 글자가 「원래 그랬던 것」이 되어 이력이 빈다. */
+    if(ev&&ev.id&&!S.editBase['ev:'+ev.id]) S.editBase['ev:'+ev.id]=clone(ev);
     var c=compute(ev),p=progress(ev),ro=!writable()||p.status==='paid',dis=ro?' disabled':'';
     var rows=(ev.members||[]).map(function(m,i){
       var day=memberDays(m)*c.rate,prep=c.alloc[i],pay=day+prep;
@@ -4783,7 +4867,8 @@
       return '<div style="display:flex;gap:8px;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px">'+
         '<span><b>'+esc(nameOf(a.uid))+'</b> · '+what+'</span><span style="color:var(--muted);white-space:nowrap">'+esc(shortTime(a.at))+'</span></div>';
     }).join('');
-    return '<section class="card"><h2>결재</h2>'+
+    return editLogCard(ev)+
+      '<section class="card"><h2>결재</h2>'+
       (roleless?'<div class="note n-warn" style="margin:0 0 12px">회계·대표 역할이 아직 지정되지 않아 승인이 완료될 수 없습니다. 좌측 <b>역할</b>에서 지정하세요.</div>':'')+
       '<div class="steps">'+steps+'</div>'+
       (btns.length?'<div class="actions" style="margin-top:14px">'+btns.join('')+'</div>':'')+
