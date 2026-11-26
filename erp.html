@@ -323,8 +323,23 @@
   .empty strong{display:block; color:var(--ink); font-size:15.5px; font-weight:700; letter-spacing:-.02em; margin-bottom:6px}
 
   /* ---- 공문 미리보기 ---- */
-  .doc{background:#fff; color:#15171a; border:1px solid var(--line); border-radius:8px; padding:30px 28px;
-    font-size:13px; line-height:1.85}
+  /* 미리보기가 출력물과 같아야 한다. 화면에서는 칸만큼 넓게 펴지고
+     종이에서는 A4 폭으로 줄어들면, 보면서 맞춘 줄바꿈이 인쇄하면
+     전부 어긋난다. 화면에도 A4 한 장을 그대로 깐다.
+
+     세로로 길어지는 건 괜찮다. 어디서 장이 넘어가는지 옅은 선으로
+     그어 둔다 — 한 장에 안 들어가도 되지만, 어디서 잘리는지는
+     보여야 표가 반으로 갈리는 걸 미리 피할 수 있다. */
+  .doc{background:#fff; color:#15171a; border:0; border-radius:0;
+    width:210mm; box-sizing:border-box; margin:0 auto;
+    padding:18mm 20mm; font-size:13px; line-height:1.85;
+    box-shadow:0 1px 3px rgba(0,0,0,.10), 0 8px 28px rgba(0,0,0,.10);
+    background-image:repeating-linear-gradient(to bottom,
+      transparent 0, transparent calc(297mm - 1px),
+      rgba(0,0,0,.14) calc(297mm - 1px), rgba(0,0,0,.14) 297mm)}
+  /* 담는 칸이 A4 보다 좁으면 종이를 통째로 줄인다 (fitPaper).
+     폭만 줄이면 줄바꿈이 달라져서 미리보기 구실을 못 한다. */
+  .docwrap{overflow:hidden}
   :root[data-theme="dark"] .doc, :root:not([data-theme="light"]) .doc{background:#F7F7F5}
   @media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .doc{background:#fff} }
   .doc .dhead{position:relative; text-align:center; min-height:40px; display:flex;
@@ -375,9 +390,11 @@
   /* PDF 로 뜰 때는 화면 밖에 A4 비율로 펼쳐 놓고 그대로 찍는다.
      어두운 화면에서도 종이는 흰색이어야 한다. */
   #printroot.cap{display:block; position:fixed; left:-10000px; top:0;
-    width:780px; background:#fff; z-index:-1}
+    width:210mm; background:#fff; z-index:-1}
+  /* 찍을 때는 장 넘어가는 선도 그림자도 지운다. 화면에서만 쓰는 표시다. */
   #printroot.cap .doc{border:0; border-radius:0; background:#fff; color:#15171a;
-    padding:26px 28px; font-size:13.5px}
+    background-image:none; box-shadow:none; zoom:1;
+    padding:18mm 20mm; font-size:13px}
   #printroot.cap .doc .sealimg{mix-blend-mode:normal}
   @media print{
     /* 여백을 0으로 둔다. 브라우저는 날짜·쪽번호·웹주소를 '종이 여백'에 찍는데,
@@ -387,7 +404,8 @@
     html,body{background:#fff !important}
     body.printing .shell{display:none !important}
     body.printing #printroot{display:block !important}
-    #printroot .doc{border:0; border-radius:0; padding:18mm 16mm; background:#fff !important; font-size:13.5px}
+    #printroot .doc{border:0; border-radius:0; padding:18mm 20mm; background:#fff !important;
+      background-image:none !important; box-shadow:none; zoom:1; width:auto; font-size:13px}
     #printroot .doc *{color:#15171a}
     #printroot .doc .mark{color:#8a6a2a}
     #printroot .doc .sealimg{mix-blend-mode:normal}
@@ -1427,6 +1445,7 @@
       }
     }
     paint();
+    fitPaper();
     if(!keep) return;
     try{
       var n=document.querySelector(keep.k);
@@ -1437,6 +1456,26 @@
       if(keep.s!=null&&n.setSelectionRange) n.setSelectionRange(keep.s,keep.e);
     }catch(e3){}
   }
+  /* ─── 종이 맞추기 ───
+     미리보기는 A4 한 장이어야 한다. 담는 칸이 그보다 좁다고 종이
+     폭을 줄이면 줄바꿈이 달라지고, 그 순간 미리보기는 거짓말이 된다.
+     폭은 그대로 두고 종이를 통째로 줄인다. */
+  var A4W=(210/25.4)*96;
+  function fitPaper(){
+    var ds=document.querySelectorAll('.doc');
+    for(var i=0;i<ds.length;i++){
+      var d=ds[i], p=d.parentElement; if(!p) continue;
+      d.style.zoom='1';
+      /* 칸 안쪽 폭이다. 테두리 안쪽 여백까지 빼야 종이가 안 삐져나온다. */
+      var cs=getComputedStyle(p);
+      var w=p.clientWidth-(parseFloat(cs.paddingLeft)||0)-(parseFloat(cs.paddingRight)||0);
+      d.style.zoom = (w>0&&w<A4W) ? String(Math.max(.35, w/A4W)) : '1';
+    }
+  }
+  var fitT=null;
+  window.addEventListener('resize', function(){
+    clearTimeout(fitT); fitT=setTimeout(fitPaper,120);
+  });
   function paint(){
     app=$('#app')||app; if(!app)return;
     renderNav();
