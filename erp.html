@@ -340,6 +340,10 @@
   /* 담는 칸이 A4 보다 좁으면 종이를 통째로 줄인다 (fitPaper).
      폭만 줄이면 줄바꿈이 달라져서 미리보기 구실을 못 한다. */
   .docwrap{overflow:hidden}
+  /* 나눠 놓은 장. 한 장은 딱 A4 한 장이고, 넘치는 건 다음 장으로 갔다. */
+  .pages{display:flex; flex-direction:column; align-items:center; gap:16px}
+  .doc.page{height:297mm; overflow:hidden; background-image:none; margin:0}
+  .pageno{font-size:11.5px; color:var(--muted); text-align:center; margin:-8px 0 0}
   /* 색만 바꾼다. background 단축으로 쓰면 장 넘어가는 선까지 같이 지워진다. */
   :root[data-theme="dark"] .doc, :root:not([data-theme="light"]) .doc{background-color:#F7F7F5}
   @media (prefers-color-scheme: light){ :root:not([data-theme="dark"]) .doc{background-color:#fff} }
@@ -403,18 +407,19 @@
     padding:18mm 20mm; font-size:13px}
   #printroot.cap .doc .sealimg{mix-blend-mode:normal}
   @media print{
-    /* 여백은 종이가 가진다. 문서 안쪽 여백으로 흉내 내면 그 여백이
-       첫 장에만 붙고, 두 장째부터는 글자가 종이 끝에 닿는다.
-       @page 여백은 모든 장에 똑같이 들어간다.
-
-       브라우저가 날짜·쪽번호·웹주소를 이 여백에 찍을 수 있다.
-       인쇄 창에서 「머리글 및 바닥글」을 끄면 사라진다. */
-    @page{size:A4; margin:18mm 20mm}
+    /* 장은 화면에서 이미 나눠 놨다 (paginate). 한 장이 곧 A4 한 장이고
+       여백도 장마다 제 몫을 갖고 있다. 종이 여백은 0 으로 둔다 —
+       브라우저가 날짜·쪽번호·웹주소를 찍을 자리가 없어져서 설정을
+       만질 필요가 없다. */
+    @page{size:A4; margin:0}
     html,body{background:#fff !important}
     body.printing .shell{display:none !important}
     body.printing #printroot{display:block !important}
-    #printroot .doc{border:0; border-radius:0; padding:0; background:#fff !important;
+    #printroot .doc{border:0; border-radius:0; padding:18mm 20mm; background:#fff !important;
       background-image:none !important; box-shadow:none; zoom:1; width:auto; font-size:13px}
+    #printroot .pages{display:block; gap:0}
+    #printroot .doc.page{height:297mm; break-after:page; page-break-after:always}
+    #printroot .doc.page:last-child{break-after:auto; page-break-after:auto}
     #printroot .doc *{color:#15171a}
     #printroot .doc .mark{color:#8a6a2a}
     #printroot .doc .sealimg{mix-blend-mode:normal}
@@ -617,7 +622,7 @@
     rcvOpen:false,rcvOn:'',rcvAmt:'',rcvBank:'',rcvMemo:'',rcvDel:null,evplSel:null,
     adv:{},advEdit:null,advDraft:null,advDel:null,advPay:null,advBack:null,advBank:'',advOn:'',advWho:'open',
     payWho:null,payYm:'',mergeFrom:null,mergeTo:'',merging:false,
-    lists:{},slack:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
+    lists:{},slack:{},org:{},confEdit:null,confDraft:'',slackBusy:false,schedOn:'',
     slackChs:null,slackChErr:'',editBase:{},
     budgets:{},bgY:'',bgEdit:null,bgDel:null,bgKind:'',bgDraft:null,fold:{}};
 
@@ -1284,9 +1289,10 @@
       ov:f.k.map(function(k){return {k:k,v:''};}),
       att:[],
       signer:'마이티블레싱대표', seal:scope!=='in',
-      /* 연락처는 비워 둔다 — 저장소가 공개라 코드에 번호를 박지 않는다.
-         한 번 입력하면 그 문서에 저장되고, 복사해서 새 문서를 만들면 따라온다. */
-      addr:'', tel1:'', tel2:'', email:'contact@mightyblessing.com',
+      /* 연락처는 코드에 안 박는다 — 저장소가 공개다. 시스템 설정에
+         한 번 넣어 두면 새 공문마다 거기서 따라온다. */
+      addr:String(S.org.addr||''), tel1:String(S.org.tel1||''), tel2:String(S.org.tel2||''),
+      email:String(S.org.email||'contact@mightyblessing.com'),
       line:[], steps:firstStep(), status:'draft', drafter:S.me.id||'', createdAt:nowISO(), updatedAt:nowISO()};
   }
 
@@ -1465,12 +1471,107 @@
       if(keep.s!=null&&n.setSelectionRange) n.setSelectionRange(keep.s,keep.e);
     }catch(e3){}
   }
+  /* ─── 종이로 나누기 ───
+     선만 그어서는 어디서 잘릴지 알 수 없다. 표 한 줄과 발신명의는
+     통째로 넘어가야 해서, 선 그은 자리와 실제 경계가 어긋난다.
+     종이를 실제로 나눠 놓는다. 화면에서 세는 장수가 곧 인쇄 장수고,
+     인쇄와 PDF 도 이 나눠 놓은 걸 그대로 쓴다.
+
+     쪼갤 수 있는 건 본문 항목(li)과 표의 줄(tr)뿐이다. 나머지는
+     통째로 넘어간다 — 발신명의와 직인이 따로 놀면 공문이 아니다. */
+  var MMPX=96/25.4;
+  var PAGE_H=297*MMPX;   /* A4 한 장. scrollHeight 는 안쪽 여백까지 센다. */
+
+  /* 이 덩어리를 쪼갤 수 있나. 쪼갤 수 있으면 [껍데기 만드는 함수, 조각들] */
+  function splitParts(n){
+    if(!n||n.nodeType!==1) return null;
+    if(n.tagName==='OL'&&n.classList.contains('body'))
+      return {kids:[].slice.call(n.children), shell:function(from){
+        var o=n.cloneNode(false); o.setAttribute('start',String(from+1)); return o;
+      }};
+    if(n.tagName==='TABLE'){
+      var rows=[].slice.call(n.querySelectorAll('tr'));
+      if(rows.length<2) return null;
+      return {kids:rows, shell:function(){
+        var t=n.cloneNode(false); t.appendChild(document.createElement('tbody')); return t;
+      }, into:function(sh){ return sh.tBodies[0]||sh; }};
+    }
+    return null;
+  }
+
+  function paginate(host){
+    var doc=host.querySelector(':scope > .doc'); if(!doc) return;
+    if(doc.classList.contains('page')) return;
+    var kids=[].slice.call(doc.childNodes);
+    var wrap=document.createElement('div'); wrap.className='pages';
+    doc.parentNode.insertBefore(wrap,doc);
+    doc.parentNode.removeChild(doc);
+
+    var page=null, made=[];
+    function newPage(){
+      page=doc.cloneNode(false);
+      page.classList.add('page');
+      /* 재는 동안에는 높이를 열어 둔다. 297mm 로 고정해 놓고 재면
+         빈 장도 꽉 찬 것으로 나와서 한 줄도 못 담는다. */
+      page.setAttribute('style','height:auto');
+      wrap.appendChild(page); made.push(page);
+    }
+    function fits(){ return page.scrollHeight<=Math.ceil(PAGE_H)+1; }
+    newPage();
+
+    kids.forEach(function(n){
+      page.appendChild(n);
+      if(fits()) return;
+      page.removeChild(n);
+
+      var sp=splitParts(n);
+      if(sp){
+        var into=sp.into||function(x){return x;};
+        var shell=sp.shell(0);
+        page.appendChild(shell);
+        for(var i=0;i<sp.kids.length;i++){
+          into(shell).appendChild(sp.kids[i]);
+          if(fits()) continue;
+          into(shell).removeChild(sp.kids[i]);
+          /* 이 장에 한 줄도 못 넣었으면 그냥 밀어 넣는다. 안 그러면
+             빈 장이 끝없이 늘어난다. */
+          if(!into(shell).children.length){
+            shell.parentNode.removeChild(shell);
+            if(page.childNodes.length) newPage();
+            shell=sp.shell(i); page.appendChild(shell);
+            into(shell).appendChild(sp.kids[i]);
+            continue;
+          }
+          newPage();
+          shell=sp.shell(i); page.appendChild(shell);
+          into(shell).appendChild(sp.kids[i]);
+        }
+        return;
+      }
+
+      if(page.childNodes.length) newPage();
+      page.appendChild(n);
+    });
+
+    /* 끝에 빈 장이 남을 수 있다. */
+    var last=wrap.lastChild;
+    if(last&&!last.childNodes.length){ wrap.removeChild(last); made.pop(); }
+    /* 다 담았으니 높이를 A4 로 되돌린다. */
+    made.forEach(function(pg){ pg.removeAttribute('style'); });
+  }
+
   /* ─── 종이 맞추기 ───
      미리보기는 A4 한 장이어야 한다. 담는 칸이 그보다 좁다고 종이
      폭을 줄이면 줄바꿈이 달라지고, 그 순간 미리보기는 거짓말이 된다.
      폭은 그대로 두고 종이를 통째로 줄인다. */
   var A4W=(210/25.4)*96;
   function fitPaper(){
+    /* 그리기가 끝난 뒤에 나눈다. 나누기 전에 폭을 줄이면 줄바꿈이
+       달라져서 장 수가 엉뚱하게 나온다. */
+    try{
+      var hosts=document.querySelectorAll('[data-paper]');
+      for(var k=0;k<hosts.length;k++) paginate(hosts[k]);
+    }catch(e){}
     var ds=document.querySelectorAll('.doc');
     for(var i=0;i<ds.length;i++){
       var d=ds[i], p=d.parentElement; if(!p) continue;
@@ -2178,7 +2279,7 @@
         '</section>'+
       '</div><div class="stack" style="min-width:0">'+
         evidenceCard(d)+
-        '<section class="card"><h2>미리보기</h2>'+applyPreview(d)+'</section>'+
+        '<section class="card" data-paper><h2>미리보기</h2>'+applyPreview(d)+'</section>'+
         editLogCard(d)+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+
@@ -2279,7 +2380,7 @@
         '</section>'+
         attCard(d)+
         evidenceCard(d,{doc:true})+
-        '<section class="card"><h2>미리보기</h2>'+docPreview(d)+'</section>'+
+        '<section class="card" data-paper><h2>미리보기</h2>'+docPreview(d)+'</section>'+
         editLogCard(d)+
         '<section class="card"><h2>결재</h2>'+docSteps(d)+
           (acts.length?'<div class="actions" style="margin-top:14px">'+acts.join('')+'</div>':'')+printHint+
@@ -2488,40 +2589,39 @@
     };
     root.innerHTML=previewHTML(d);
     root.className='cap';
+    /* 장은 화면에서 쓰는 것과 같은 규칙으로 나눈다. 예전에는 문서
+       전체를 한 장짜리 그림으로 찍어 놓고 픽셀로 잘랐다. 블록이
+       어디 있는지 모르니 표가 반으로 갈리고 글자가 가로로 잘렸다. */
+    try{ paginate(root); }catch(e){}
     loadScript(PDF_LIB[0])
       .then(function(){ return loadScript(PDF_LIB[1]); })
       .then(function(){ return waitImages(root); })
       .then(function(){
-        var w=root.offsetWidth||780, h=root.offsetHeight||0;
-        if(!h) throw new Error('문서 높이를 잡지 못했습니다');
-        /* 너무 긴 문서는 캔버스 한도에 걸린다. 그만큼 배율을 낮춘다. */
-        var sc=Math.min(2, 32000/Math.max(1,h));
-        return window.html2canvas(root,{scale:sc, backgroundColor:'#ffffff', useCORS:true,
-          logging:false, width:w, height:h, windowWidth:w, scrollX:0, scrollY:0});
+        var pgs=[].slice.call(root.querySelectorAll('.doc.page'));
+        if(!pgs.length){ var one=root.querySelector('.doc'); if(one) pgs=[one]; }
+        if(!pgs.length) throw new Error('문서를 찾지 못했습니다');
+        var shots=[];
+        return pgs.reduce(function(chain,pg){
+          return chain.then(function(){
+            return window.html2canvas(pg,{scale:2, backgroundColor:'#ffffff', useCORS:true,
+              logging:false, width:pg.offsetWidth, height:pg.offsetHeight,
+              windowWidth:pg.offsetWidth, scrollX:0, scrollY:0});
+          }).then(function(cv){ shots.push(cv); });
+        }, Promise.resolve()).then(function(){ return shots; });
       })
-      .then(function(cv){
-        if(!cv||!cv.width||!cv.height) throw new Error('화면을 그려내지 못했습니다');
+      .then(function(shots){
+        if(!shots.length) throw new Error('화면을 그려내지 못했습니다');
         var JS=(window.jspdf&&window.jspdf.jsPDF)||window.jsPDF;
         if(!JS) throw new Error('jsPDF를 불러오지 못했습니다');
         var pdf=new JS({unit:'mm',format:'a4',orientation:'p'});
-        var PW=210, PH=297, M=16, iw=PW-M*2, ph=PH-M*2;
-        /* 한 장짜리 그림을 음수 좌표로 밀어 넣는 대신, 장마다 그만큼만 잘라 넣는다.
-           좌표가 음수로 가면 jsPDF 가 변환 행렬을 못 만들고 멈춘다. */
-        var sliceH=Math.max(1, Math.floor(cv.width*ph/iw));
-        var pages=Math.max(1, Math.ceil(cv.height/sliceH));
-        var tmp=document.createElement('canvas'), ctx=tmp.getContext('2d');
-        tmp.width=cv.width;
-        for(var i=0;i<pages;i++){
-          var y=i*sliceH, hh=Math.min(sliceH, cv.height-y);
-          if(hh<=0) break;
-          tmp.height=hh;
-          ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,tmp.width,hh);
-          ctx.drawImage(cv, 0,y,cv.width,hh, 0,0,cv.width,hh);
-          var mm=hh*iw/cv.width;
-          if(!isFinite(mm)||mm<=0) break;
+        /* 한 장이 곧 A4 한 장이다. 여백은 이미 장 안에 들어 있으니
+           종이 전면에 그대로 얹는다. */
+        shots.forEach(function(cv,i){
+          if(!cv||!cv.width||!cv.height) return;
           if(i) pdf.addPage();
-          pdf.addImage(tmp.toDataURL('image/jpeg',0.92),'JPEG',M,M,iw,mm);
-        }
+          var mm=Math.min(297, cv.height*210/cv.width);
+          pdf.addImage(cv.toDataURL('image/jpeg',0.92),'JPEG',0,0,210,mm);
+        });
         pdf.save(docFileName(d)+'.pdf');
         flash('PDF를 내려받았습니다');
         done();
@@ -2537,6 +2637,11 @@
   function printDoc(d){
     var root=document.getElementById('printroot'); if(!root)return;
     root.innerHTML=previewHTML(d);
+    /* 화면 밖에 A4 폭으로 펼쳐 놓고 장을 나눈다. 안 보이는 채로는
+       높이를 못 재서 한 장도 못 나눈다. */
+    root.className='cap';
+    try{ paginate(root); }catch(e){}
+    root.className='';
     var oldTitle=document.title;
     document.title=docFileName(d);
     document.body.classList.add('printing');
@@ -5741,6 +5846,23 @@
 
       listCards+
 
+      '<div class="card" style="margin-top:14px"><h2>기관 연락처</h2>'+
+        '<p class="hint" style="margin:0 0 12px">공문 맨 아래 <b>시행 · 우 · 전화 · 메일</b> 줄에 들어갑니다. '+
+          '여기 한 번 넣어 두면 새로 만드는 공문마다 따라 들어갑니다. '+
+          '이미 만들어 둔 공문은 그 문서에서 직접 고치셔야 합니다.</p>'+
+        '<div class="kv" style="grid-template-columns:72px minmax(0,1fr)">'+
+          '<div class="k">우편·주소</div><div><input type="text" id="orgAddr" value="'+esc(S.org.addr||'')+'" '+
+            'placeholder="12995 경기도 하남시 …" style="width:100%;padding:8px 10px"'+(canCfg?'':' disabled')+'></div>'+
+          '<div class="k">전화1</div><div><input type="text" id="orgTel1" value="'+esc(S.org.tel1||'')+'" '+
+            'placeholder="010-0000-0000" style="width:100%;padding:8px 10px"'+(canCfg?'':' disabled')+'></div>'+
+          '<div class="k">전화2</div><div><input type="text" id="orgTel2" value="'+esc(S.org.tel2||'')+'" '+
+            'placeholder="없으면 비워 두세요" style="width:100%;padding:8px 10px"'+(canCfg?'':' disabled')+'></div>'+
+          '<div class="k">메일</div><div><input type="text" id="orgMail" value="'+esc(S.org.email||'')+'" '+
+            'placeholder="contact@mightyblessing.com" style="width:100%;padding:8px 10px"'+(canCfg?'':' disabled')+'></div>'+
+        '</div>'+
+        (canCfg?'<div class="actions"><button class="btn primary sm" id="orgSave">저장</button></div>':'')+
+      '</div>'+
+
       '<div class="card" style="margin-top:14px"><h2>로고</h2>'+
         '<p class="hint" style="margin:0 0 12px">왼쪽 메뉴와 공문 머리에 들어갑니다. 흰 배경은 자동으로 빼냅니다.</p>'+
         '<div class="sealbox">'+
@@ -6091,6 +6213,12 @@
       var def=LISTS.filter(function(L){return L.k===kk;})[0];
       if(def) return saveList(kk, def.d.slice());
       return;
+    }
+    if(t.id==='orgSave'){
+      var g=function(id){ var n=$('#'+id); return n?String(n.value||'').trim():''; };
+      return saveCfg('org',{addr:g('orgAddr'),tel1:g('orgTel1'),tel2:g('orgTel2'),email:g('orgMail')})
+        .then(function(){ flash('저장했습니다 · 새로 만드는 공문부터 들어갑니다'); render(); })
+        .catch(function(e){ errbar('저장 실패 '+(e&&(e.code||e.message)||'')); });
     }
     if(t.id==='slSave'){
       var hook=($('#slHook')&&$('#slHook').value||'').trim();
@@ -7447,6 +7575,9 @@
       },function(){});
       S.db.doc('config/slack').onSnapshot(function(d){
         S.slack=(d.exists&&d.data())||{}; render();
+      },function(){});
+      S.db.doc('config/org').onSnapshot(function(d){
+        S.org=(d.exists&&d.data())||{}; render();
       },function(){});
       S.db.doc('config/roles').onSnapshot(function(d){
         var m=(d.exists&&d.data().map)?d.data().map:{};
