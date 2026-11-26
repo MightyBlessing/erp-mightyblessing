@@ -8,6 +8,7 @@ Edge Function 은 **아무도 안 켜도 도는 작은 서버**다. 두 가지�
 | 하는 일 | 누가 부르나 | 왜 ERP 가 직접 안 하나 |
 |---|---|---|
 | `digest` — 아침에 챙길 것 묶어서 보내기 | 매일 9시 pg_cron | 브라우저가 꺼져 있다 |
+| `nag` — 차례인 사람에게 결재 독촉 쪽지 | 평일 9~19시 매시 pg_cron | 상신 쪽지를 못 보면 그걸로 끝이었다 |
 | `notify` — 결재 알림 보내기 | ERP 화면 | 웹후크 주소를 브라우저에 안 싣기 위해 |
 
 `notify` 가 중요한 이유: 지금은 웹후크 주소가 `config/slack` 문서에 있고,
@@ -79,7 +80,7 @@ cd ~/dev/erp-mightyblessing && supabase functions deploy erp-slack
 > 안 그러면 Supabase 문지기가 **토큰 없는 요청을 함수에 닿기도 전에** 막는다.
 > 크론은 토큰이 없으니 매일 아침 아무 일도 안 일어난다.
 > 문을 연 게 아니라 문지기를 함수 안으로 옮긴 것이다 —
-> `digest` 는 CRON_SECRET 을, `notify` 는 로그인 토큰을 직접 확인한다.
+> `digest` 와 `nag` 는 CRON_SECRET 을, `notify` 는 로그인 토큰을 직접 확인한다.
 
 ---
 
@@ -155,6 +156,8 @@ supabase functions logs erp-slack
 ## 6. 매일 아침 깨우기
 
 Supabase 대시보드 → **SQL Editor** → `supabase/cron-digest.sql` 내용을 붙여넣는다.
+
+독촉도 같은 방식이다 — `supabase/cron-nag.sql` 을 한 번 더 붙여넣는다.
 파일 안의 `<CRON_SECRET>` 두 군데를 4번에서 만든 값으로 바꾸고 **Run**.
 
 `0 0 * * *` 는 UTC 0시, 곧 **한국 아침 9시**다.

@@ -105,6 +105,132 @@ const foot = () => {
   return `:large_purple_circle: *마이티블레싱 ERP* · <${b}|${h}>`;
 };
 
+/* ───────── 사람 찾기 ─────────
+   uid 로 이름과 메일 주소를 안다. 메일이 있어야 슬랙에서 사람을 찾는다. */
+async function memberMap() {
+  const r = await fetch(
+    `${env("SUPABASE_URL")}/rest/v1/members?select=uid,name,email`,
+    {
+      headers: {
+        apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+        authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+      },
+    },
+  );
+  if (!r.ok) return {} as Record<string, { name: string; email: string }>;
+  const rows = (await r.json()) as { uid: string; name: string; email: string }[];
+  const out: Record<string, { name: string; email: string }> = {};
+  rows.forEach((x) => {
+    out[x.uid] = { name: x.name || "", email: x.email || "" };
+  });
+  return out;
+}
+function daysBetween(from: string, to: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) return 0;
+  const a = Date.parse(from + "T00:00:00Z"), b = Date.parse(to + "T00:00:00Z");
+  return Math.max(0, Math.round((b - a) / 86400000));
+}
+
+/* ───────── 독촉 ─────────
+   상신하는 순간 쪽지가 한 통 간다. 그걸 못 보면 그걸로 끝이었다.
+   멈춘 결재가 일주일을 가는 이유가 그것이다.
+
+   업무시간에 한 시간에 한 번, 「지금 당신 차례」인 사람에게만 보낸다.
+   채널에는 안 뿌린다 — 남의 일이 섞여 흐르면 자기 차례도 같이
+   흘려보낸다. 그게 지금까지 일어난 일이다.
+
+   차례가 아닌 사람에게는 아무것도 안 간다. 할 일이 없는 사람에게
+   매시간 울리면 그 사람은 다음부터 이 알림을 안 본다. */
+async function nag() {
+  const t = todayKST();
+  const [dd, ev, ap, cf, mem] = await Promise.all([
+    docs("docs"),
+    docs("events"),
+    docs("approvals"),
+    docs("config"),
+    memberMap(),
+  ]);
+
+  type ND = Record<string, any>;
+  const roles =
+    ((cf.find((x) => x.id === "roles")?.data as ND)?.map || {}) as Record<string, string>;
+  const accUids = Object.keys(roles).filter((u) => roles[u] === "accounting");
+  const ceoUids = Object.keys(roles).filter((u) => roles[u] === "ceo");
+
+  /* 사람마다 자기 앞으로 온 것만 모은다. */
+  const jobs: Record<string, string[]> = {};
+  const add = (uid: string, line: string) => {
+    if (!uid) return;
+    (jobs[uid] = jobs[uid] || []).push(line);
+  };
+  const aging = (d: unknown) => {
+    const n = daysBetween(String(d || "").slice(0, 10), t);
+    return n > 0 ? ` · ${n}일째` : "";
+  };
+
+  /* 문서 — 결재선에서 아직 안 누른 첫 사람이 차례다. */
+  dd.forEach((x) => {
+    const d = x.data as ND;
+    if (!d) return;
+    if (d.status !== "submitted" && d.status !== "progress") return;
+    const steps = (d.steps || []) as ND[];
+    const i = steps.findIndex((s) =>
+      s.state !== "approved" && s.state !== "rejected"
+    );
+    if (i < 0) return;
+    add(
+      steps[i].uid,
+      `• <${base()}#docs/${x.id}|${d.title || "문서"}>${aging(d.updatedAt || d.createdAt)}`,
+    );
+  });
+
+  /* 정산 — 회계가 전원 끝나야 대표 차례가 된다. 화면과 같은 규칙이다. */
+  const okAcc: Record<string, string[]> = {};
+  const okCeo: Record<string, boolean> = {};
+  ap.forEach((x) => {
+    const a = x.data as ND;
+    if (!a || !a.eventId) return;
+    if (a.kind === "accounting") {
+      (okAcc[a.eventId] = okAcc[a.eventId] || []).push(a.uid);
+    }
+    if (a.kind === "ceo") okCeo[a.eventId] = true;
+  });
+  ev.forEach((x) => {
+    const e = x.data as ND;
+    if (!e || e.status !== "submitted") return;
+    if (!accUids.length) return; /* 회계가 없으면 아무도 못 넘긴다 */
+    const done = okAcc[x.id] || [];
+    const left = accUids.filter((u) => done.indexOf(u) < 0);
+    const turn = left.length ? left : (okCeo[x.id] ? [] : ceoUids);
+    turn.forEach((u) =>
+      add(
+        u,
+        `• <${base()}#settle/${x.id}|${e.name || "행사"} 정산>${aging(e.updatedAt)}`,
+      )
+    );
+  });
+
+  const uids = Object.keys(jobs);
+  if (!uids.length) return { ok: true, skipped: "결재 차례인 사람이 없습니다" };
+
+  let sent = 0, miss = 0;
+  for (const u of uids) {
+    const mail = (mem[u] || {}).email || "";
+    if (!mail) { miss++; continue; }
+    const lines = jobs[u];
+    const text = [
+      `:bell: 결재가 기다립니다 — ${lines.length}건`,
+      `${(mem[u] || {}).name || ""} 님 차례입니다`,
+      ...lines,
+      `:arrow_upper_right: <${base()}#dash|ERP 열기>`,
+      foot(),
+    ].join("\n");
+    if (await dmByEmail(mail, text)) sent++;
+    else miss++;
+  }
+  return { ok: true, sent, miss, people: uids.length };
+}
+
 /* ───────── 예약 알림 ─────────
    매일 아침 한 번. 오늘 줄 돈, 늦은 돈, 묵은 결재를 한 장으로 묶는다.
    보낼 게 없으면 안 보낸다. 빈 알림이 매일 오면 다음부터 안 읽는다. */
@@ -800,6 +926,22 @@ Deno.serve(async (req) => {
         return J({ ok: false, error: "허가되지 않은 요청입니다" }, 401);
       }
       return J(await digest());
+    }
+
+    if (action === "nag") {
+      /* 크론만 부를 수 있다. 아무나 부르면 하루에 백 번 울린다. */
+      const key = body.key || url.searchParams.get("key") || "";
+      if (!env("CRON_SECRET") || key !== env("CRON_SECRET")) {
+        return J({ ok: false, error: "허가되지 않은 요청입니다" }, 401);
+      }
+      /* 밤과 주말에는 안 보낸다. 새벽 3시에 울리는 결재 독촉은
+         일을 앞당기지 못하고 알림만 끄게 만든다. */
+      const kn = new Date(Date.now() + 9 * 3600 * 1000);
+      const kh = kn.getUTCHours(), kw = kn.getUTCDay();
+      if (kw === 0 || kw === 6 || kh < 9 || kh > 19) {
+        return J({ ok: true, skipped: "업무시간이 아닙니다" });
+      }
+      return J(await nag());
     }
 
     if (action === "test") {
