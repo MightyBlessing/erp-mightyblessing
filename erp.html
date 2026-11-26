@@ -4590,6 +4590,11 @@
         }
         if(!did('confirm'))btns.push('<button class="btn" data-act="confirm">확인했습니다</button>');
         if(iAcc||iCeo)btns.push('<button class="btn danger" data-act="reject">반려</button>');
+        /* 상신해 놓고 알림이 안 갔던 때가 있었다. 그때 올린 정산은
+           아무도 모르는 채로 멈춰 있다. 다시 부를 수 있어야 한다. */
+        var tn=evTurn(ev)||[];
+        if(tn.length) btns.push('<button class="btn" data-act="remind" title="'+
+          esc(tn.map(nameOf).join(', '))+' 님에게 슬랙 쪽지를 다시 보냅니다">알림 다시 보내기</button>');
       }
       if(p.status==='approved'&&iAcc){
         btns.push('<span style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)">'+
@@ -6581,12 +6586,51 @@
       .then(function(){S.confirmDel=null;S.sel=null;remember();flash('행사를 삭제했습니다');render();})
       .catch(function(e){errbar('삭제 실패 '+(e&&e.code||''));});
   }
+  /* ━━━ 정산도 결재다 ━━━
+     지출결의서 같은 문서에는 알림이 붙어 있었는데 행사 정산에는
+     없었다. 상신을 해 놓고도 아무한테도 안 가서, 올린 사람은 올렸다고
+     생각하고 받을 사람은 모르는 채로 며칠이 흘렀다. 문서와 같은 길로 보낸다. */
+  function settleRows(ev){
+    var c=compute(ev);
+    return [['행사', ev.name||'—'],
+            ['일자', ymdKo(ev.date)],
+            ['인원', (ev.members||[]).length+'명'],
+            ['지급 총액', won(c.payTotal)]];
+  }
+  /* 여러 명이면 각자에게 한 통씩 간다. 메일 주소가 없는 사람은 채널로 간다 —
+     조용히 사라지는 것보다 낫다. 부츠면 보낸 수를 돌려준다. */
+  function settleSay(kind,ev,uids,sub,cta){
+    var jobs=[];
+    try{
+      var rows=settleRows(ev);
+      (uids||[]).forEach(function(u){
+        jobs.push(slackSay(kind,{what:(ev.name||'행사')+' 정산', sub:sub, rows:rows,
+          link:appLink('settle',ev.id), cta:cta||'정산표 보기', to:mailOf(u)}));
+      });
+    }catch(e){}
+    return Promise.all(jobs).then(function(r){ return r.filter(Boolean).length; })
+      .catch(function(){ return 0; });
+  }
   function settleAct(ev,kind){
     if(!S.db||!S.me.id)return;
+    if(kind==='remind'){
+      var tn=evTurn(ev)||[];
+      if(!tn.length) return errbar('지금 결재 차례인 사람이 없습니다');
+      var names=tn.map(nameOf).join(', ');
+      settleSay('ask',ev,tn,'결재가 기다리고 있습니다 · 올린 사람 '+(nameOf(ev.createdBy)||'—'),'결재하러 가기')
+        .then(function(n){
+          if(n) flash(names+' 님에게 쪽지를 보냈습니다');
+          else errbar('보내지 못했습니다 — 시스템 설정 → 슬랙 알림을 확인해 주세요');
+        });
+      return;
+    }
     if(kind==='submit'){
       var cc0=compute(ev);
       if(cc0.over) return errbar('예산을 '+won(cc0.prepTotal-cc0.pool)+' 넘었습니다. 사례비를 줄이거나 예산을 고쳐주세요');
-      ev.status='submitted';return writeStatus(ev,'submit');
+      ev.status='submitted';
+      settleSay('ask',ev,accountingUids(),
+        (nameOf(ev.createdBy)||S.me.name||'')+' 님이 정산을 올렸습니다','결재하러 가기');
+      return writeStatus(ev,'submit');
     }
     if(kind==='paid'){
       var on=String(S.payOn||'').slice(0,10);
@@ -6630,8 +6674,29 @@
         .catch(function(e){ errbar('처리 실패 '+(e&&e.code||'')); });
       return;
     }
-    if(kind==='reject'){ev.status='draft';logApproval(ev,'reject');return writeStatus(ev,null);}
+    if(kind==='reject'){
+      ev.status='draft'; logApproval(ev,'reject');
+      settleSay('no',ev,[ev.createdBy],(S.me.name||'')+' 님이 돌려보냈습니다','다시 고치러 가기');
+      return writeStatus(ev,null);
+    }
     logApproval(ev,kind);
+    /* 다음 차례에게 알린다. 방금 누른 내 기록은 아직 안 돌아왔으니
+       나를 손으로 보태서 센다. */
+    try{
+      var meN=S.me.name||'';
+      if(kind==='accounting'){
+        var done=apprOf(ev.id).filter(function(a){return a.kind==='accounting';})
+                   .map(function(a){return a.uid;});
+        done.push(S.me.id);
+        var left=accountingUids().filter(function(u){return done.indexOf(u)<0;});
+        if(left.length)
+          settleSay('ask',ev,left,meN+' 님이 회계 승인했습니다 · '+left.length+'명 남았습니다','결재하러 가기');
+        else
+          settleSay('ask',ev,ceoUids(),'회계 승인이 끝났습니다 · 최종결재 차례입니다','최종결재하러 가기');
+      }
+      else if(kind==='ceo')
+        settleSay('ok',ev,[ev.createdBy],meN+' 님이 최종결재했습니다 · 지급만 남았습니다','정산표 보기');
+    }catch(e){}
   }
   function writeStatus(ev,kind){
     S.db.doc('events/'+ev.id).update({status:ev.status,updatedAt:nowISO()})
