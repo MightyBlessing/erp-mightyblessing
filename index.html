@@ -370,6 +370,11 @@
   .doc table.ov{width:100%; border-collapse:collapse; margin:12px 0; font-size:12.5px}
   .doc table.ov th,.doc table.ov td{border:1px solid #c9cdd3; padding:6px 9px; vertical-align:top; color:#15171a}
   .doc table.ov th{width:96px; background:#F2F3F5; font-weight:500; text-align:left; white-space:nowrap}
+  /* 장이 넘어갈 때 쪼개지면 안 되는 것들. 표 한 줄이 반으로 갈리거나
+     발신명의와 직인이 따로 놀면 공문으로 못 쓴다. 붙임·발신명의·직인·
+     시행은 통째로 다음 장으로 넘어간다. */
+  .doc table.ov tr, .doc ol.body li, .doc .tail{
+    break-inside:avoid; page-break-inside:avoid}
   .doc .end{text-align:right; margin-top:10px}
   .doc .att{display:flex; gap:12px; align-items:baseline; margin-top:14px}
   .doc .att b{font-weight:400; color:#15171a; flex:0 0 auto; letter-spacing:.16em; margin-right:-.16em}
@@ -2419,6 +2424,7 @@
       (ov.length?'<table class="ov">'+ov.map(function(r,i){
         return '<tr><th>'+(OV_LETTER[i]?OV_LETTER[i]+'. ':'')+esc(r.k)+'</th><td>'+esc(r.v).replace(/\n/g,'<br>')+'</td></tr>';
       }).join('')+'</table>':'')+
+      '<div class="tail">'+
       attBlock(d)+
       '<div class="sign"><span class="nm">'+esc(d.signer||'')+(d.seal!==false?sealMark(d):'')+'</span></div>'+
       ((d.scope||'out')==='in'
@@ -2428,6 +2434,7 @@
             '<b>우</b><span>'+esc(d.addr||'')+'</span>'+
             '<b>전화</b><span>'+esc(d.tel1||'')+(d.tel2?' · '+esc(d.tel2):'')+'</span>'+
             '<b>메일</b><span>'+esc(d.email||'')+'</span></div>')+
+      '</div>'+
     '</div>';
   }
   /* 원본 공문은 본문 끝에 붙임 목록을 적고 그 뒤에 바로 '끝.'을 붙인다.
