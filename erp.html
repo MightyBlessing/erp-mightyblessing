@@ -1111,14 +1111,39 @@
     var out=[];Object.keys(S.approvals).forEach(function(k){var a=S.approvals[k];if(a&&a.eventId===id)out.push(a);});
     out.sort(function(a,b){return (a.at||'')<(b.at||'')?-1:1;});return out;
   }
+  /* ─── 팀원 확인은 세야 하는 줄이다 ───
+     예전에는 ヌ팀원 확인ネ이 결재 단계로 그려져 있으면서도 아무것도
+     막지 않았다. 한 명도 누르지 않은 정산이 대표 최종결재로 넘어가고,
+     받는 사람은 자기 금액을 본 적도 없는 채로 돈이 나갔다. 돈 얼마를
+     받는지는 받는 사람이 먼저 봐야 한다.
+
+     세는 사람은 ノ사례비 명단에 있고 ERP 계정이 연결된 사람ハ만이다.
+     명부에만 있고 계정이 없는 사람은 누를 방법이 없으니 막지 않고,
+     대신 몇 명인지를 화면에 적어 둔다. */
+  function evConfirmUids(ev){
+    var seen={},out=[];
+    ((ev&&ev.members)||[]).forEach(function(m){
+      var pr=S.people[livePid(m&&m.pid)];
+      var u=pr&&pr.uid;
+      if(u&&!seen[u]){ seen[u]=1; out.push(u); }
+    });
+    return out;
+  }
   function progress(ev){
     var list=apprOf(ev.id),acc=accountingUids(),ceo=ceoUids();
     var okAcc=acc.filter(function(u){return list.some(function(a){return a.kind==='accounting'&&a.uid===u;});});
     var okCeo=list.filter(function(a){return a.kind==='ceo';});
     var confirms=list.filter(function(a){return a.kind==='confirm';});
+    var need=evConfirmUids(ev),cu=confirms.map(function(a){return a.uid;});
+    var okConf=need.filter(function(u){return cu.indexOf(u)>=0;});
+    var missConf=need.filter(function(u){return cu.indexOf(u)<0;});
+    var noAcct=((ev&&ev.members)||[]).length-need.length;
+    var confirmDone=missConf.length===0;
     var accDone=acc.length>0&&okAcc.length===acc.length, ceoDone=okCeo.length>0;
     var derived=ev.status==='paid'?'paid':(ev.status==='submitted'&&accDone&&ceoDone)?'approved':(ev.status||'draft');
-    return {list:list,acc:acc,ceo:ceo,okAcc:okAcc,confirms:confirms,accDone:accDone,ceoDone:ceoDone,status:derived};
+    return {list:list,acc:acc,ceo:ceo,okAcc:okAcc,confirms:confirms,
+            need:need,okConf:okConf,missConf:missConf,noAcct:noAcct<0?0:noAcct,confirmDone:confirmDone,
+            accDone:accDone,ceoDone:ceoDone,status:derived};
   }
 
   /* ============ 전자결재 ============ */
@@ -1138,6 +1163,9 @@
       var w=p.acc.filter(function(u){return p.okAcc.indexOf(u)<0;});
       if(w.length) return w;
     }
+    /* 회계가 끝나면 다음은 대표가 아니라 아직 자기 금액을 보지 않은
+       팀원이다. ノ알림 다시 보내기ハ가 그 사람들에게 가야 맞다. */
+    if(!p.confirmDone) return p.missConf.slice();
     if(!p.ceoDone&&p.ceo.length) return p.ceo.slice(0,1);
     return null;
   }
@@ -4817,8 +4845,10 @@
     var steps=[
       stp(p.status!=='draft','1','상신',p.status==='draft'?'작성이 끝나면 상신하세요.':'결재 진행 중'),
       stp(p.accDone,'2','회계 승인',p.acc.length?(p.okAcc.length+' / '+p.acc.length+'명 승인'):'회계 역할이 지정되지 않았습니다'),
-      stp(p.confirms.length>0,'3','팀원 확인',p.confirms.length+'명 확인함'),
-      stp(p.ceoDone,'4','대표 최종결재',p.ceoDone?'승인됨':(p.accDone?'대표 결재 대기':'회계 승인을 기다립니다')),
+      stp(p.confirmDone,'3','팀원 확인',
+        p.need.length?(p.okConf.length+' / '+p.need.length+'명 확인'+(p.noAcct?(' · 계정 없는 '+p.noAcct+'명은 제외'):''))
+                     :'계정이 연결된 팀원이 없어 건너뜁니다'),
+      stp(p.ceoDone,'4','대표 최종결재',p.ceoDone?'승인됨':(!p.accDone?'회계 승인을 기다립니다':(!p.confirmDone?'팀원 확인을 기다립니다':'대표 결재 대기'))),
       stp(p.status==='paid','5','지급 완료',p.status==='paid'?('이체일 '+(evPaidOn(ev)||'—')):'지급 대기')
     ].join('');
     var btns=[];
@@ -4831,11 +4861,16 @@
       }
       if(p.status==='submitted'){
         if(iAcc&&!did('accounting'))btns.push('<button class="btn primary" data-act="accounting">회계 승인</button>');
-        /* 대표 최종결재는 회계가 끝나야 열린다. 순서가 뜻이 있으려면
-           앞 단계를 건너뛸 수 없어야 한다. */
+        /* 대표 최종결재는 회계와 팀원 확인이 끝나야 열린다. 순서가
+           뜻이 있으려면 앞 단계를 소리 없이 건너뛸 수 없어야 한다.
+           그렇다고 아주 막아두면 한 사람이 휴가만 가도 정산이 멈춘다.
+           건너뛰는 단추는 남기되, 누가 확인 없이 넣었는지 기록에 적혀 남는다. */
         if(iCeo&&!did('ceo')){
-          if(p.accDone) btns.push('<button class="btn primary" data-act="ceo">대표 최종결재</button>');
-          else btns.push('<button class="btn" disabled title="회계 승인이 끝나야 열립니다">대표 최종결재</button>');
+          if(!p.accDone) btns.push('<button class="btn" disabled title="회계 승인이 끝나야 열립니다">대표 최종결재</button>');
+          else if(p.confirmDone) btns.push('<button class="btn primary" data-act="ceo">대표 최종결재</button>');
+          else btns.push('<button class="btn" data-act="ceoskip" title="'+
+            esc(p.missConf.map(nameOf).join(', '))+' 님이 아직 자기 금액을 확인하지 않았습니다">'+
+            '확인 없이 최종결재 · '+p.missConf.length+'명 미확인</button>');
         }
         if(!did('confirm'))btns.push('<button class="btn" data-act="confirm">확인했습니다</button>');
         if(iAcc||iCeo)btns.push('<button class="btn danger" data-act="reject">반려</button>');
@@ -4864,12 +4899,19 @@
     }
     var log=p.list.slice().reverse().map(function(a){
       var what={confirm:'확인',accounting:'회계 승인',ceo:'대표 승인',paid:'지급 완료',reject:'반려',submit:'상신'}[a.kind]||a.kind;
+      if(a.note) what+=' · <span style="color:var(--warn)">'+esc(a.note)+'</span>';
       return '<div style="display:flex;gap:8px;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--line);font-size:12.5px">'+
         '<span><b>'+esc(nameOf(a.uid))+'</b> · '+what+'</span><span style="color:var(--muted);white-space:nowrap">'+esc(shortTime(a.at))+'</span></div>';
     }).join('');
     return editLogCard(ev)+
       '<section class="card"><h2>결재</h2>'+
       (roleless?'<div class="note n-warn" style="margin:0 0 12px">회계·대표 역할이 아직 지정되지 않아 승인이 완료될 수 없습니다. 좌측 <b>역할</b>에서 지정하세요.</div>':'')+
+      (p.status==='submitted'&&p.accDone&&!p.confirmDone
+        ? '<div class="note n-warn" style="margin:0 0 12px"><b>'+esc(p.missConf.map(nameOf).join(', '))+
+          '</b> 님이 아직 자기 사례비를 확인하지 않았습니다. '+
+          '<b>알림 다시 보내기</b>로 불러주세요. 급하면 확인 없이 넣으셔도 되고, '+
+          '그때는 누가 빠졌는지 아래 기록에 남습니다.</div>'
+        : '')+
       '<div class="steps">'+steps+'</div>'+
       (btns.length?'<div class="actions" style="margin-top:14px">'+btns.join('')+'</div>':'')+
       (log?'<h2 style="margin-top:18px">기록</h2>'+log:'')+'</section>';
@@ -6886,6 +6928,14 @@
   }
   function settleAct(ev,kind){
     if(!S.db||!S.me.id)return;
+    /* 확인 없이 넣는 경우도 결재는 같은 ノceoハ다. 다른 건 기록에 남는 한 줄뿐이다. */
+    var skipNote='';
+    if(kind==='ceoskip'){
+      var ps=progress(ev);
+      if(!ps.accDone) return errbar('회계 승인이 끝나야 최종결재할 수 있습니다');
+      if(ps.missConf.length) skipNote='팀원 확인 '+ps.missConf.length+'명 건너뜀 — '+ps.missConf.map(nameOf).join(', ');
+      kind='ceo';
+    }
     if(kind==='remind'){
       var tn=evTurn(ev)||[];
       if(!tn.length) return errbar('지금 결재 차례인 사람이 없습니다');
@@ -6952,7 +7002,7 @@
       settleSay('no',ev,[ev.createdBy],(S.me.name||'')+' 님이 돌려보냈습니다','다시 고치러 가기');
       return writeStatus(ev,null);
     }
-    logApproval(ev,kind);
+    logApproval(ev,kind,skipNote);
     /* 다음 차례에게 알린다. 방금 누른 내 기록은 아직 안 돌아왔으니
        나를 손으로 보태서 센다. */
     try{
@@ -6964,8 +7014,15 @@
         var left=accountingUids().filter(function(u){return done.indexOf(u)<0;});
         if(left.length)
           settleSay('ask',ev,left,meN+' 님이 회계 승인했습니다 · '+left.length+'명 남았습니다','결재하러 가기');
-        else
-          settleSay('ask',ev,ceoUids(),'회계 승인이 끝났습니다 · 최종결재 차례입니다','최종결재하러 가기');
+        else{
+          /* 회계가 끝나면 돈을 받을 사람들에게 먼저 간다. 자기 금액을
+             보고 확인해야 대표 단추가 열린다. */
+          var pz=progress(ev);
+          if(pz.missConf.length)
+            settleSay('ask',ev,pz.missConf,'회계 승인이 끝났습니다 · 내 사례비를 확인해 주세요','내 금액 확인하기');
+          settleSay('ask',ev,ceoUids(),'회계 승인이 끝났습니다 · '+
+            (pz.missConf.length?('팀원 확인 '+pz.missConf.length+'명이 남았습니다'):'최종결재 차례입니다'),'결재하러 가기');
+        }
       }
       else if(kind==='ceo')
         settleSay('ok',ev,[ev.createdBy],meN+' 님이 최종결재했습니다 · 지급만 남았습니다','정산표 보기');
@@ -6976,9 +7033,9 @@
       .then(function(){if(kind)logApproval(ev,kind);render();})
       .catch(function(e){errbar('처리 실패 '+(e&&e.code||''));});
   }
-  function logApproval(ev,kind){
+  function logApproval(ev,kind,note){
     S.db.doc('approvals/'+ev.id+'__'+kind+'__'+S.me.id)
-      .set({eventId:ev.id,uid:S.me.id,kind:kind,note:'',at:nowISO()})
+      .set({eventId:ev.id,uid:S.me.id,kind:kind,note:note||'',at:nowISO()})
       .catch(function(e){errbar('기록 실패 '+(e&&e.code||''));});
   }
   function setRole(uid,role){
@@ -7095,6 +7152,9 @@
     Object.keys(S.docs).forEach(function(k){var d=S.docs[k];
       if(d.drafter)ids[d.drafter]=1;
       (d.steps||[]).forEach(function(s){if(s.uid)ids[s.uid]=1;});});
+    /* 명부에서 계정이 연결된 사람도 넣는다. 정산 화면이 ノ아직 확인
+       안 한 사람ハ 을 이름으로 부르는데, 여기 빠지면 ノ알 수 없음ハ 으로 나온다. */
+    Object.keys(S.people).forEach(function(k){var pr=S.people[k];if(pr&&pr.uid)ids[pr.uid]=1;});
     var list=Object.keys(ids).filter(function(u){return !S.profiles[u];});
     if(!list.length)return;
     resolving=true;
@@ -7124,12 +7184,17 @@
         net:2000000,rev:0,opex:0,tax:0,rate:150000,ratio:50,cap:300000,unit:10000,
         wageSrc:'fund',capMode:'carry',status:'submitted',createdAt:nowISO(),updatedAt:nowISO(),
         members:[
-          {n:'팀원 1',p:'대본·큐시트 작성, 대기화면 제작',r:'공연 연출',w:true,pt:11},
-          {n:'팀원 2',p:'대관 신청·견적·계약 진행',r:'음향 세팅·운영',w:true,pt:11},
-          {n:'팀원 3',p:'홍보 영상 편집, 현장 소모품 구매',r:'관객 접수',w:true,pt:7},
+          {n:'팀원 1',pid:'p-d',p:'대본·큐시트 작성, 대기화면 제작',r:'공연 연출',w:true,pt:11},
+          {n:'팀원 2',pid:'p-e',p:'대관 신청·견적·계약 진행',r:'음향 세팅·운영',w:true,pt:11},
+          {n:'팀원 3',pid:'p-f',p:'홍보 영상 편집, 현장 소모품 구매',r:'관객 접수',w:true,pt:7},
           {n:'팀원 4',p:'환불 송금 처리',r:'관객 접수',w:true,pt:3},
           {n:'팀원 5',p:'초기 장소 조사',r:'불참',w:false,pt:0}
         ]} },
+      /* 명부—계정이 연결된 사람만 ノ확인했습니다ハ를 누를 수 있다.
+         팀원 4·5 는 일부러 연결하지 않았다 — 명부에만 있는 사람은
+         결재를 멈추지 않는다는 걸 데모에서도 보여준다. */
+      people:{ 'p-d':{name:'팀원 1',uid:'u-d'}, 'p-e':{name:'팀원 2',uid:'u-e'},
+               'p-f':{name:'팀원 3',uid:'demo-me'} },
       approvals:{},
       docs:{ 'sample-doc':{type:'official',title:'장소 대관 요청의 건 (예시)',no:'마블 제2024/2026-001호',date:today(),
         to:'○○교회 당회장',cc:'당회',subject:'○○행사(가제) 장소 대관 요청의 건',
